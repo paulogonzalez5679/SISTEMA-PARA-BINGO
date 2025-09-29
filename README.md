@@ -85,14 +85,12 @@ Sistema web para la gestión y administración de juegos de bingo, pensado para 
 
 Desarrollado por [Paulo Gonzalez](https://github.com/paulogonzalez5679).
 
-Colaboradores:
-- [Tu nombre aquí] (¡Agrega tu usuario si colaboras!)
 
 ---
 
 ## 📄 Licencia
 
-Este proyecto está bajo la licencia MIT. Consulta el archivo `LICENSE` para más detalles.
+Este proyecto está bajo la licencia BSD-3. Consulta el archivo `LICENSE` para más detalles.
 
 ---
 
