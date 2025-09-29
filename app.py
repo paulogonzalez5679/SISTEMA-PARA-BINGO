@@ -19,11 +19,8 @@ import time
 # ==========================
 # RUTAS
 # ==========================
-# json_dir = "/Users/paulogonzalez/Desktop/bingo uets/jsons"
 json_dir = "./jsons"
-# winners_dir = "/Users/paulogonzalez/Desktop/bingo uets/winners"
 winners_dir = "./winners"
-# upload_dir = "/Users/paulogonzalez/Desktop/bingo uets/upload"
 upload_dir = "./upload"
 
 # ==========================
