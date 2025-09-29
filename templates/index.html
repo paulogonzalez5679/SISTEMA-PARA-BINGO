@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Bingo Game Start</title>
+<link href="https://fonts.gstatic.com/" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#0d46f2",
+                        "background-light": "#f5f6f8",
+                        "background-dark": "#101422",
+                        "text-light": "#101422",
+                        "text-dark": "#f5f6f8",
+                        "input-light": "#ffffff",
+                        "input-dark": "#1a2034",
+                        "placeholder-light": "#a0aec0",
+                        "placeholder-dark": "#718096",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "1rem",
+                        "xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        .bingo-ball {
+            width: 5rem;
+            height: 5rem;
+            border-radius: 9999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 2.25rem;
+            color: white;
+            position: absolute;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display">
+<div class="relative min-h-screen flex items-center justify-center overflow-hidden">
+<div class="bingo-ball bg-[#ffeb3b]" style="top: 10%; left: 15%; transform: rotate(-15deg);">B</div>
+<div class="bingo-ball bg-primary" style="top: 20%; right: 10%; transform: rotate(10deg);">I</div>
+<div class="bingo-ball bg-[#ffeb3b]" style="bottom: 25%; left: 5%; transform: rotate(20deg);">N</div>
+<div class="bingo-ball bg-primary" style="bottom: 15%; right: 20%; transform: rotate(-5deg);">G</div>
+<div class="bingo-ball bg-[#ffeb3b]" style="top: 60%; left: 25%; transform: rotate(5deg);">O</div>
+<div class="relative z-10 w-full max-w-md mx-auto p-8 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-sm rounded-xl shadow-2xl text-center">
+<h1 class="text-5xl font-bold mb-2">
+<span class="text-[#ffeb3b]">BINGO</span>
+<span class="text-primary">UETS</span>
+</h1>
+<p class="text-text-light dark:text-text-dark mb-8 text-lg">¡Que empiece el juego! Elige cómo empezar.</p>
+<div class="space-y-6">
+<div>
+<label class="sr-only" for="card-count">Número de Tablas de Bingo</label>
+<input class="w-full form-input bg-input-light dark:bg-input-dark border-2 border-primary/20 focus:border-primary focus:ring-primary text-text-light dark:text-text-dark placeholder-placeholder-light dark:placeholder-placeholder-dark text-center text-xl p-4 rounded-lg transition-all duration-300" id="card-count" placeholder="Ingresa la cantidad de tablas" type="number"/>
+</div>
+<div class="flex items-center justify-center space-x-2">
+<hr class="w-full border-primary/20"/>
+<span class="text-text-light dark:text-text-dark font-semibold">O</span>
+<hr class="w-full border-primary/20"/>
+</div>
+<div>
+<label class="w-full flex flex-col items-center justify-center bg-input-light dark:bg-input-dark border-2 border-dashed border-primary/30 hover:border-primary cursor-pointer rounded-lg p-6 text-center transition-all duration-300" for="pdf-upload">
+<span class="material-symbols-outlined text-4xl text-primary mb-2">
+                            upload_file
+                        </span>
+<span class="text-text-light dark:text-text-dark font-semibold">Importar tablas desde PDF</span>
+<span class="text-sm text-placeholder-light dark:text-placeholder-dark">Arrastra y suelta o haz clic para subir</span>
+<input accept=".pdf" class="hidden" id="pdf-upload" type="file"/>
+</label>
+</div>
+<button class="w-full bg-primary hover:bg-primary/90 text-white font-bold text-xl py-4 px-6 rounded-lg transition-transform duration-200 ease-in-out transform hover:scale-105 shadow-lg">
+                    Empezar Juego
+                </button>
+</div>
+</div>
+</div>
+
+</body>
+<script>
+const cardCountInput = document.getElementById('card-count');
+const pdfInput = document.getElementById('pdf-upload');
+const startBtn = document.querySelector('button');
+
+function actualizarOpciones() {
+        if (cardCountInput.value) {
+                pdfInput.disabled = true;
+                startBtn.disabled = false;
+                startBtn.classList.remove('bg-gray-400');
+                startBtn.classList.add('bg-primary');
+        } else {
+                pdfInput.disabled = false;
+                startBtn.disabled = true;
+                startBtn.classList.remove('bg-primary');
+                startBtn.classList.add('bg-gray-400');
+        }
+}
+
+cardCountInput.addEventListener('input', actualizarOpciones);
+actualizarOpciones();
+
+startBtn.addEventListener('click', async () => {
+        const numCards = cardCountInput.value;
+        if (!numCards) return alert('Ingresa la cantidad de cartones');
+
+        const response = await fetch('/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ num_cards: numCards })
+        });
+
+        if (response.ok) {
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `bingo_cards_${numCards}.pdf`;
+                a.click();
+                URL.revokeObjectURL(url);
+                mostrarTableroMaster();
+        }
+});
+
+pdfInput.addEventListener('change', async (event) => {
+        if (cardCountInput.value) return; // Bloquea si hay valor en card-count
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('pdf', file);
+
+        const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData
+        });
+
+        const data = await response.json();
+        console.log('Cartones del PDF:', data);
+        alert(`Se procesaron ${data.cards.length} cartones`);
+        mostrarTableroMaster();
+});
+
+function mostrarTableroMaster() {
+    // Aquí va la lógica para mostrar el tablero master
+    alert('Tablero master listo para el juego.');
+    // Redirigir a masterTable.html
+    window.location.href = "/pages/masterTable.html";
+}
+</script>
+</html>
