@@ -120,26 +120,26 @@ cardCountInput.addEventListener('input', actualizarOpciones);
 actualizarOpciones();
 
 startBtn.addEventListener('click', async () => {
-        const numCards = cardCountInput.value;
-        if (!numCards) return alert('Ingresa la cantidad de cartones');
+    const numCards = cardCountInput.value;
+    if (!numCards) return alert('Ingresa la cantidad de cartones');
 
-        const response = await fetch('/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ num_cards: numCards })
-        });
+    // Llamada al backend para generar cartones (sin descarga)
+    const response = await fetch('/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ num_cards: numCards })
+    });
 
-        if (response.ok) {
-                const blob = await response.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `bingo_cards_${numCards}.pdf`;
-                a.click();
-                URL.revokeObjectURL(url);
-                mostrarTableroMaster();
-        }
+    const data = await response.json();
+
+    if (data.success) {
+        alert(`✅ Se generaron ${data.total_cartones} cartones.\nTableros listos en el servidor.`);
+        mostrarTableroMaster();
+    } else {
+        alert(`❌ Error al generar las tablas: ${data.message || 'Error desconocido'}`);
+    }
 });
+
 
 pdfInput.addEventListener('change', async (event) => {
         if (cardCountInput.value) return; // Bloquea si hay valor en card-count
@@ -161,9 +161,6 @@ pdfInput.addEventListener('change', async (event) => {
 });
 
 function mostrarTableroMaster() {
-    // Aquí va la lógica para mostrar el tablero master
-    alert('Tablero master listo para el juego.');
-    // Redirigir a masterTable.html
     window.location.href = "/pages/masterTable.html";
 }
 </script>
