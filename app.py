@@ -30,9 +30,8 @@ upload_dir = "./upload"
 # ==========================
 mongo_client = MongoClient("mongodb://localhost:27017/")
 mongo_db = mongo_client["bingo_db"]
-mongo_collection = mongo_db["tablas_ganadoras"]
-
-
+mongo_collection_winners = mongo_db["tablas_ganadoras"]
+mongo_collection_tables = mongo_db["tablas"]
 
 # ==========================
 # FUNCIONES
@@ -377,7 +376,7 @@ def progress():
             ganadores.append(card['serial'])
             try:
                 # Guardar en MongoDB solo si ganó
-                mongo_collection.update_one(
+                mongo_collection_winners.update_one(
                     {"serial": card["serial"]},
                     {"$set": {
                         "serial": card["serial"],
@@ -525,6 +524,22 @@ def generate_cards():
     output_json = os.path.join(json_dir, f"bingo_cards_{num_cards}.json")
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump(cards_data, f, indent=2, ensure_ascii=False)
+    
+    # 🔥 Guardar todas las tablas generadas en MongoDB
+    try:
+        for card in cards_data:
+            mongo_collection_tables.update_one(
+                {"serial": card["serial"]},
+                {"$set": {
+                    "serial": card["serial"],
+                    "matrix": card["matrix"],
+                    "timestamp": time.time()
+                }},
+                upsert=True
+            )
+        print(f"✅ Todas las tablas generadas guardadas en MongoDB.")
+    except Exception as e:
+        print(f"❌ Error al guardar las tablas generadas en MongoDB: {e}")
 
     # 🔥 Nuevo: Validar duplicados automáticamente
     validacion = validar_duplicados(cards_data)
@@ -556,7 +571,7 @@ def tabla_ganadora():
     """
     try:
         # Obtener todas las tablas ganadoras de MongoDB
-        ganadoras = list(mongo_collection.find({}, {"_id": 0}))  # excluye _id del resultado
+        ganadoras = list(mongo_collection_winners.find({}, {"_id": 0}))  # excluye _id del resultado
 
         if not ganadoras:
             return jsonify({
