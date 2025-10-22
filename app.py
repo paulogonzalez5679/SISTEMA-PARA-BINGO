@@ -15,6 +15,8 @@ import os
 import json
 import sys
 import time
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 
 # ==========================
 # RUTAS
@@ -22,6 +24,15 @@ import time
 json_dir = "./jsons"
 winners_dir = "./winners"
 upload_dir = "./upload"
+
+# ==========================
+# Conexión a MongoDB
+# ==========================
+mongo_client = MongoClient("mongodb://localhost:27017/")
+mongo_db = mongo_client["bingo_db"]
+mongo_collection = mongo_db["tablas_ganadoras"]
+
+
 
 # ==========================
 # FUNCIONES
@@ -43,36 +54,6 @@ def generate_bingo_card():
     card = list(map(list, zip(*card)))
     card[2][2] = None  # centro libre
     return card
-
-# --- Obtiene la infromacion del PDF subido y extrae en un JSON---
-def extraer_matrices_pdf(pdf_path, output_json):
-    serial_pattern = re.compile(r'CARD\d{5}')
-    number_pattern = re.compile(r'\b\d+\b')
-    cards_data = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if not text:
-                continue
-            serials = serial_pattern.findall(text)
-            numbers = [int(n) for n in number_pattern.findall(text)]
-            for i, serial in enumerate(serials):
-                card_numbers = numbers[i*24:(i+1)*24]
-                matrix = []
-                idx = 0
-                for r in range(5):
-                    row = []
-                    for c in range(5):
-                        if r==2 and c==2:
-                            row.append(None)
-                        else:
-                            row.append(card_numbers[idx])
-                            idx += 1
-                    matrix.append(row)
-                cards_data.append({"serial": serial, "matrix": matrix})
-    with open(output_json, "w", encoding="utf-8") as f:
-        json.dump(cards_data, f, indent=2, ensure_ascii=False)
-    return cards_data
 
 # --- Valida que no exista tablas duplicadas---
 def validar_duplicados(cards_data):
@@ -316,10 +297,29 @@ app = Flask(__name__)
 # ENDPOINTS
 # ==========================
 
+@app.route('/test_mongo', methods=['GET'])
+def test_mongo():
+    """Prueba simple de conexión con MongoDB."""
+    try:
+        if mongo_client is None:
+            return jsonify({"success": False, "message": "Cliente MongoDB no inicializado."}), 500
+        mongo_client.admin.command('ping')
+        dbs = mongo_client.list_database_names()
+        return jsonify({
+            "success": True,
+            "message": "Conexión exitosa a MongoDB.",
+            "databases": dbs
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 # Endpoint para marcar/desmarcar un número en todas las matrices
 @app.route('/mark', methods=['POST'])
 def mark_number():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     num = data.get('num')
     marcado = data.get('marcado', True)
     files = [f for f in os.listdir(json_dir) if f.endswith('.json')]
@@ -342,8 +342,6 @@ def mark_number():
         card['marks'] = marks
         # Validar ganador
         card['won'] = check_winner_py(marks)
-        if card['won']:
-            ganadores.append(card['serial'])
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(cards, f, indent=2, ensure_ascii=False)
     return jsonify({'success': True, 'ganadores': ganadores})
@@ -374,6 +372,24 @@ def progress():
         card["aciertos"] = aciertos
         # Solo es ganador si tiene exactamente 25 aciertos (excluyendo el centro libre)
         card["won"] = (aciertos == 25)
+        ganadores = []
+        if card['won']:
+            ganadores.append(card['serial'])
+            try:
+                # Guardar en MongoDB solo si ganó
+                mongo_collection.update_one(
+                    {"serial": card["serial"]},
+                    {"$set": {
+                        "serial": card["serial"],
+                        "matrix": card["matrix"],
+                        "won": True,
+                        "timestamp": time.time()
+                    }},
+                    upsert=True
+                )
+                print(f"✅ Cartón ganador guardado en MongoDB: {card['serial']}")
+            except Exception as e:
+                print(f"❌ Error al guardar el ganador {card['serial']}: {e}")
         progreso.append({"serial": card["serial"], "aciertos": aciertos, "won": card["won"]})
     progreso.sort(key=lambda x: x["aciertos"], reverse=True)
     top3 = progreso[:3]
@@ -383,7 +399,7 @@ def progress():
 # ENDPOINT PARA GENERAR PDF DEL GANADOR
 @app.route('/winner_pdf', methods=['POST'])
 def winner_pdf():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     serial = data.get('serial')
     matrix = data.get('matrix')
     marks = data.get('marks')
@@ -456,7 +472,7 @@ def reset():
 # ENDPOINT PARA GENERAR CARTONES EN PDF
 @app.route('/generate', methods=['POST'])
 def generate_cards():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     num_cards = int(data.get("num_cards", 1))
     PAGE_WIDTH, PAGE_HEIGHT = letter
     MARGIN_X = 0.5 * inch
@@ -529,6 +545,37 @@ def generate_cards():
 def get_cards():
     cards = get_current_cards()
     return jsonify(cards)
+
+
+# ENDPOINT PARA OBTENER LA/LAS TABLA(S) GANADORA(S) EN JSON
+@app.route('/tabla_ganadora', methods=['GET'])
+def tabla_ganadora():
+    """
+    Devuelve todas las tablas ganadoras almacenadas en MongoDB.
+    Si no existen registros, devuelve un mensaje apropiado.
+    """
+    try:
+        # Obtener todas las tablas ganadoras de MongoDB
+        ganadoras = list(mongo_collection.find({}, {"_id": 0}))  # excluye _id del resultado
+
+        if not ganadoras:
+            return jsonify({
+                "success": False,
+                "message": "No hay tablas ganadoras registradas en la base de datos."
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "count": len(ganadoras),
+            "type": "ganadores",
+            "cards": ganadoras
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 # ENDPOINT PARA SUBIR Y PROCESAR PDF
 # -------------------------
@@ -635,3 +682,16 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# Stub para compatibilidad: iniciar_bingo puede ser llamada desde main cuando se ejecuta en modo CLI
+def iniciar_bingo(json_path=None):
+    """Stub simple para iniciar el juego de bingo desde CLI. Actualmente solo muestra información mínima.
+    Esto evita errores si el script es invocado con argumentos en modo no servidor.
+    """
+    if json_path:
+        print(f"Iniciando bingo con archivo: {json_path}")
+    else:
+        print("Iniciando bingo (sin archivo especificado)")
+    # Implementación real puede lanzar la lógica del juego si se necesita.
+    return None
