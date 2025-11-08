@@ -2,3 +2,4 @@ flask
 pdfplumber
 reportlab
 pymongo
+flask-cors
