@@ -301,7 +301,8 @@ def check_winner_py(marks):
 app = Flask(__name__)
 # Habilitar CORS para las rutas de la API. Permitir específicamente el frontend en localhost:3000
 # Ajusta origins si necesitas permitir otros orígenes o usa '*' para permitir todos (menos seguro).
-CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}}, supports_credentials=True)
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+
 
 # ==========================
 # ENDPOINTS
@@ -1816,59 +1817,129 @@ def validar_tabla_serial(serial):
 # -------------------------
 @app.route('/upload', methods=['POST'])
 def upload_pdf():
-    file = request.files.get('pdf')
-    if not file:
-        return jsonify({"error": "No se envió PDF"}), 400
-
-    os.makedirs(json_dir, exist_ok=True)
-    os.makedirs(upload_dir, exist_ok=True)
-    timestamp = int(time.time())
-    temp_pdf_path = os.path.join(upload_dir, f"tmp_upload_{timestamp}.pdf")
-    file.save(temp_pdf_path)
-
-    json_filename = f"bingo_cards_uploaded_{timestamp}.json"
-    json_path = os.path.join(json_dir, json_filename)
-
+    """
+    Sube un PDF, extrae las matrices de bingo, valida duplicados,
+    guarda los cartones en MongoDB y genera un archivo JSON con los resultados.
+    """
     try:
-        cards_data = extraer_matrices_pdf(temp_pdf_path, json_path)
-    except Exception as e:
+        file = request.files.get('pdf')
+        if not file:
+            return jsonify({"error": "No se envió PDF"}), 400
+
+        os.makedirs(json_dir, exist_ok=True)
+        os.makedirs(upload_dir, exist_ok=True)
+
+        timestamp = int(time.time())
+        temp_pdf_path = os.path.join(upload_dir, f"tmp_upload_{timestamp}.pdf")
+        file.save(temp_pdf_path)
+
+        json_filename = f"bingo_cards_uploaded_{timestamp}.json"
+        json_path = os.path.join(json_dir, json_filename)
+
+        # ------------------------
+        # 1️⃣ Procesar el PDF
+        # ------------------------
+        try:
+            cards_data = extraer_matrices_pdf(temp_pdf_path, json_path)
+        except Exception as e:
+            try:
+                os.remove(temp_pdf_path)
+            except:
+                pass
+            return jsonify({"error": "Error al procesar PDF", "detail": str(e)}), 500
+
         try:
             os.remove(temp_pdf_path)
         except:
             pass
-        return jsonify({"error": "Error al procesar PDF", "detail": str(e)}), 500
 
-    try:
-        os.remove(temp_pdf_path)
-    except:
-        pass
+        # ------------------------
+        # 2️⃣ Validar duplicados
+        # ------------------------
+        validacion = validar_duplicados(cards_data)
+        repetidos_internos = {}
 
-    # Validaciones finales
-    validacion = validar_duplicados(cards_data)
-    repetidos_internos = {}
-    for card in cards_data:
-        nums = [n for row in card['matrix'] for n in row if n is not None]
-        if len(nums) != len(set(nums)):
-            repetidos_internos[card['serial']] = {
-                "nums": nums,
-                "duplicates": [n for n in set(nums) if nums.count(n) > 1]
-            }
+        for card in cards_data:
+            nums = [n for row in card['matrix'] for n in row if n is not None]
+            if len(nums) != len(set(nums)):
+                repetidos_internos[card['serial']] = {
+                    "nums": nums,
+                    "duplicates": [n for n in set(nums) if nums.count(n) > 1]
+                }
 
-    # Sobrescribir JSON final con resultado completo
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(cards_data, f, indent=2, ensure_ascii=False)
+        # ------------------------
+        # 3️⃣ Insertar o actualizar en MongoDB
+        # ------------------------
+        insertados = 0
+        actualizados = 0
 
-    return jsonify({
-        "cards": cards_data,
-        "json_path": json_path,
-        "total_cartones": validacion["total"],
-        "cartones_unicos": validacion["unicos"],
-        "cartones_duplicados": validacion["duplicados"],
-        "duplicados_seriales": validacion["duplicados_seriales"],
-        "repetidos_internos": repetidos_internos,
-        "message": f"Cartones guardados en {json_path}"
-    })
+        for card in cards_data:
+            try:
+                result = mongo_collection_tables.update_one(
+                    {"serial": card["serial"]},
+                    {"$set": {
+                        "serial": card["serial"],
+                        "matrix": card["matrix"],
+                        "timestamp": time.time(),
+                        "won": False,
+                        "stateAsigned": False
+                    }},
+                    upsert=True
+                )
+                if result.upserted_id is not None:
+                    insertados += 1
+                elif result.modified_count > 0:
+                    actualizados += 1
+            except Exception as e:
+                print(f"❌ Error guardando serial {card.get('serial')}: {e}")
 
+        # ------------------------
+        # 4️⃣ Función auxiliar para evitar error JSON
+        # ------------------------
+        def stringify_keys(obj):
+            """Convierte todas las claves no-string en cadenas para evitar TypeError al jsonify."""
+            if isinstance(obj, dict):
+                return {str(k): stringify_keys(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [stringify_keys(i) for i in obj]
+            else:
+                return obj
+
+        cards_data = stringify_keys(cards_data)
+        repetidos_internos = stringify_keys(repetidos_internos)
+        validacion = stringify_keys(validacion)
+
+        # ------------------------
+        # 5️⃣ Guardar JSON final
+        # ------------------------
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(cards_data, f, indent=2, ensure_ascii=False)
+
+        # ------------------------
+        # 6️⃣ Respuesta final
+        # ------------------------
+        return jsonify({
+            "success": True,
+            "cards": cards_data,
+            "json_path": json_path,
+            "total_cartones": validacion.get("total"),
+            "cartones_unicos": validacion.get("unicos"),
+            "cartones_duplicados": validacion.get("duplicados"),
+            "duplicados_seriales": validacion.get("duplicados_seriales"),
+            "repetidos_internos": repetidos_internos,
+            "insertados_en_mongo": insertados,
+            "actualizados_en_mongo": actualizados,
+            "message": f"✅ Cartones procesados y guardados en MongoDB ({insertados} nuevos, {actualizados} actualizados)"
+        }), 200
+
+    except Exception as e:
+        # Error general
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "Error inesperado al subir el PDF."
+        }), 500
+    
 def main():
     if len(sys.argv) > 1:
         arg = sys.argv[1]
