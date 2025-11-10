@@ -45,6 +45,10 @@ mongo_collection_users = mongo_db["Users"]
 # FUNCIONES
 # ==========================
 
+# --- Verificar existencia de tablas ---
+def check_tables_exist():
+    return mongo_collection_tables.count_documents({}) > 0
+
 # --- Generador de cartón ---
 def generate_bingo_card():
     card = []
@@ -308,6 +312,12 @@ CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 # ENDPOINTS
 # ==========================
 
+@app.route('/')
+def index():
+    """Ruta principal que verifica si existen tablas en la base de datos."""
+    has_tables = check_tables_exist()
+    return render_template('index.html', has_tables=has_tables)
+
 @app.route('/test_mongo', methods=['GET'])
 def test_mongo():
     """Prueba simple de conexión con MongoDB."""
@@ -358,9 +368,9 @@ def mark_number():
     return jsonify({'success': True, 'ganadores': ganadores})
 
 # ENDPOINT PARA RUTAS DE RENDERIZADO
-@app.route('/')
-def index():
-    return render_template('index.html')
+# @app.route('/')
+# def index():
+#     return render_template('index.html')
 
 @app.route('/pages/masterTable.html')
 def master_table():

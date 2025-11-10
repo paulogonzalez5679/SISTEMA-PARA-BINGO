@@ -3,3 +3,4 @@ pdfplumber
 reportlab
 pymongo
 flask-cors
+fitz

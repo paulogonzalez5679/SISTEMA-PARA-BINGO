@@ -70,6 +70,7 @@
 </h1>
 <p class="text-text-light dark:text-text-dark mb-8 text-lg">¡Que empiece el juego! Elige cómo empezar.</p>
 <div class="space-y-6">
+{% if not has_tables %}
 <div>
 <label class="sr-only" for="card-count">Número de Tablas de Bingo</label>
 <input class="w-full form-input bg-input-light dark:bg-input-dark border-2 border-primary/20 focus:border-primary focus:ring-primary text-text-light dark:text-text-dark placeholder-placeholder-light dark:placeholder-placeholder-dark text-center text-xl p-4 rounded-lg transition-all duration-300" id="card-count" placeholder="Ingresa la cantidad de tablas" type="number"/>
@@ -89,6 +90,7 @@
 <input accept=".pdf" class="hidden" id="pdf-upload" type="file"/>
 </label>
 </div>
+{% endif %}
 <button class="w-full bg-primary hover:bg-primary/90 text-white font-bold text-xl py-4 px-6 rounded-lg transition-transform duration-200 ease-in-out transform hover:scale-105 shadow-lg">
                     Empezar Juego
                 </button>
@@ -98,28 +100,33 @@
 
 </body>
 <script>
+const startBtn = document.querySelector('button');
 const cardCountInput = document.getElementById('card-count');
 const pdfInput = document.getElementById('pdf-upload');
-const startBtn = document.querySelector('button');
 
+{% if not has_tables %}
 function actualizarOpciones() {
-        if (cardCountInput.value) {
-                pdfInput.disabled = true;
-                startBtn.disabled = false;
-                startBtn.classList.remove('bg-gray-400');
-                startBtn.classList.add('bg-primary');
-        } else {
-                pdfInput.disabled = false;
-                startBtn.disabled = true;
-                startBtn.classList.remove('bg-primary');
-                startBtn.classList.add('bg-gray-400');
-        }
+    if (cardCountInput.value) {
+        pdfInput.disabled = true;
+        startBtn.disabled = false;
+        startBtn.classList.remove('bg-gray-400');
+        startBtn.classList.add('bg-primary');
+    } else {
+        pdfInput.disabled = false;
+        startBtn.disabled = true;
+        startBtn.classList.remove('bg-primary');
+        startBtn.classList.add('bg-gray-400');
+    }
 }
 
-cardCountInput.addEventListener('input', actualizarOpciones);
-actualizarOpciones();
+if (cardCountInput && pdfInput) {
+    cardCountInput.addEventListener('input', actualizarOpciones);
+    actualizarOpciones();
+}
+{% endif %}
 
 startBtn.addEventListener('click', async () => {
+    {% if not has_tables %}
     const numCards = cardCountInput.value;
     if (!numCards) return alert('Ingresa la cantidad de cartones');
 
@@ -138,10 +145,15 @@ startBtn.addEventListener('click', async () => {
     } else {
         alert(`❌ Error al generar las tablas: ${data.message || 'Error desconocido'}`);
     }
+    {% else %}
+    // Si ya hay tablas, ir directamente al tablero master
+    mostrarTableroMaster();
+    {% endif %}
 });
 
-
-pdfInput.addEventListener('change', async (event) => {
+{% if not has_tables %}
+if (pdfInput) {
+    pdfInput.addEventListener('change', async (event) => {
         if (cardCountInput.value) return; // Bloquea si hay valor en card-count
         const file = event.target.files[0];
         if (!file) return;
@@ -150,15 +162,17 @@ pdfInput.addEventListener('change', async (event) => {
         formData.append('pdf', file);
 
         const response = await fetch('/upload', {
-                method: 'POST',
-                body: formData
+            method: 'POST',
+            body: formData
         });
 
         const data = await response.json();
         console.log('Cartones del PDF:', data);
         alert(`Se procesaron ${data.cards.length} cartones`);
         mostrarTableroMaster();
-});
+    });
+}
+{% endif %}
 
 function mostrarTableroMaster() {
     window.location.href = "/pages/masterTable.html";
