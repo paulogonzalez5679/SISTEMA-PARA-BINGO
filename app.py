@@ -40,6 +40,7 @@ mongo_collection_tables = mongo_db["tablas"]
 mongo_collection_students = mongo_db["Estudiantes"]
 mongo_collection_participantes = mongo_db["Participantes"]
 mongo_collection_users = mongo_db["Users"]
+mongo_collection_teachers = mongo_db["Docentes"]
 
 # ==========================
 # FUNCIONES
@@ -657,6 +658,42 @@ def buscar_estudiante(cedula):
             "error": str(e),
             "message": "Error al buscar el estudiante en la base de datos"
         }), 500
+
+
+# ENDPOINT PARA BUSCAR ESTUDIANTE POR CÉDULA
+@app.route('/api/docente/<cedula>', methods=['GET'])
+def buscar_docente(cedula):
+    """
+    Busca un docente por su número de cédula en la base de datos.
+    
+    Args:
+        cedula (str): Número de cédula del docente a buscar.
+        
+    Returns:
+        JSON con la información del docente o un mensaje de error si no se encuentra.
+    """
+    try:
+        # Buscar el docente en la colección
+        docente = mongo_collection_teachers.find_one({"Cedula": cedula}, {"_id": 0})
+        
+        if docente:
+            return jsonify({
+                "success": True,
+                "docente": docente
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": f"No se encontró ningún docente con la cédula: {cedula}"
+            }), 404
+            
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "Error al buscar el docente en la base de datos"
+        }), 500
+
 
 # ENDPOINT PARA VALIDAR LA EXISTENCIA DE LAS TABLAS INGRESADAS PARA PARTICIPAR 
 @app.route('/api/validarTabla/<tabla>', methods=['POST'])
@@ -1686,7 +1723,10 @@ def obtener_reportes():
             resto = num_tablas % 2
             total_participante = pares * 5 + resto * 3 if num_tablas > 0 else 0
 
-            total_vendido += total_participante
+            # se puede saber el total vendido de cada grupo
+            #total_vendido += total_participante
+
+            total_vendido += num_tablas
 
             # obtener nombre del usuario registrador
             rp = p.get("registrado_por")
