@@ -737,6 +737,20 @@ def crear_participante():
     """Alias para /api/CreateParticipantes"""
     return registrar_participante()
 
+def calcular_total(num_tablas):
+    # 1. Cobro por grupos de 5 → 10 dólares
+    grupos_5 = num_tablas // 5
+    resto = num_tablas % 5
+
+    total = grupos_5 * 10
+
+    # 2. Cobro por el resto:
+    #    Cada 2 → 5 dólares
+    #    Si queda 1 → 3 dólares
+    total += (resto // 2) * 5
+    total += (resto % 2) * 3
+
+    return total
 
 # ENDPOINT PARA REGISTRAR PARTICIPANTES
 @app.route('/api/registrarParticipante', methods=['POST'])
@@ -862,7 +876,8 @@ def registrar_participante():
         
         # Calcular total según cantidad de tablas
         num_tablas = len(tablas_seriales)
-        total_pagar = (num_tablas // 2) * 5 + (num_tablas % 2) * 3
+        total_pagar = calcular_total(num_tablas)
+        #total_pagar = (num_tablas // 2) * 5 + (num_tablas % 2) * 3
 
         # --- Crear participante ---
         nuevo_participante = {
@@ -2032,7 +2047,8 @@ def main():
             print("Argumento no reconocido. Usa un número de tablas o un PDF.")
     else:
         # Si no hay argumentos, inicia el servidor Flask
-        app.run(debug=True)
+        app.run(host="0.0.0.0", port=5000, debug=True)
+
 
 if __name__ == '__main__':
     main()
