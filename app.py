@@ -22,6 +22,8 @@ from datetime import datetime
 from bson import ObjectId
 from werkzeug.security import generate_password_hash, check_password_hash
 from bson import ObjectId
+import hashlib
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 # ==========================
 # RUTAS
@@ -483,21 +485,63 @@ def winner_pdf():
 # ENDPOINT PARA REINICIAR EL JUEGO
 @app.route('/reset', methods=['POST'])
 def reset():
-    files = [f for f in os.listdir(json_dir) if f.endswith('.json')]
-    if not files:
-        return jsonify({"success": False, "message": "No hay cartones"})
-    files.sort(reverse=True)
-    path = os.path.join(json_dir, files[0])
-    with open(path, "r", encoding="utf-8") as f:
-        cards = json.load(f)
-    for card in cards:
-        card["marks"] = [[False for _ in range(5)] for _ in range(5)]
+    # Reconstruir JSON activo leyendo la colección 'tablas' en MongoDB
+    try:
+        # Obtener todas las tablas que NO sean ganadoras
+        active_cursor = mongo_collection_tables.find({"$or": [{"won": False}, {"won": {"$exists": False}}]}, {"serial": 1, "matrix": 1})
+        active_rows = list(active_cursor)
+    except Exception as e:
+        return jsonify({"success": False, "message": "Error al leer la base de datos", "error": str(e)}), 500
+
+    # Si no hay tablas activas, devolver mensaje
+    if not active_rows:
+        # crear un JSON vacío para que el frontend no falle
+        os.makedirs(json_dir, exist_ok=True)
+        output_json = os.path.join(json_dir, f"bingo_cards_active_{int(time.time())}.json")
+        with open(output_json, "w", encoding="utf-8") as f:
+            json.dump([], f, indent=2, ensure_ascii=False)
+        return jsonify({"success": True, "message": "No hay cartones activos (todos son ganadores)", "removed_winners": 0, "json_path": output_json})
+
+    # Construir lista de cartones a partir de la BD
+    cards = []
+    for r in active_rows:
+        serial = r.get('serial')
+        matrix = r.get('matrix', [[None]*5 for _ in range(5)])
+        # asegurarse que el centro esté en None
+        try:
+            matrix[2][2] = None
+        except Exception:
+            pass
+        card = {
+            "serial": serial,
+            "matrix": matrix,
+            "marks": [[False for _ in range(5)] for _ in range(5)],
+            "won": False,
+            "aciertos": 0
+        }
+        # marcar centro libre
         card["marks"][2][2] = True
-        card["won"] = False
-        card["aciertos"] = 0
-    with open(path, "w", encoding="utf-8") as f:
+        cards.append(card)
+
+    # Guardar nuevo JSON con timestamp (el frontend elegirá el archivo más reciente)
+    os.makedirs(json_dir, exist_ok=True)
+    output_json = os.path.join(json_dir, f"bingo_cards_active_{int(time.time())}.json")
+    with open(output_json, "w", encoding="utf-8") as f:
         json.dump(cards, f, indent=2, ensure_ascii=False)
-    return jsonify({"success": True, "message": "Juego reiniciado"})
+
+    # Contar ganadores en la colección para información
+    try:
+        winners_count = mongo_collection_tables.count_documents({"won": True})
+    except Exception:
+        winners_count = 0
+
+    removed_winners = winners_count
+
+    msg = f"Juego reiniciado — JSON reconstruido desde DB. Cartones activos: {len(cards)}"
+    if removed_winners:
+        msg += f" — cartones ganadores detectados en DB: {removed_winners}"
+
+    return jsonify({"success": True, "message": msg, "removed_winners": removed_winners, "json_path": output_json, "active_count": len(cards)})
 
 # ENDPOINT PARA GENERAR CARTONES EN PDF
 @app.route('/generate', methods=['POST'])
@@ -513,7 +557,22 @@ def generate_cards():
     os.makedirs(upload_dir, exist_ok=True)
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
-    cards_list = [(f"CARD{str(i+1).zfill(5)}", generate_bingo_card()) for i in range(num_cards)]
+    cards_list = []
+    generated = set()
+
+    for i in range(num_cards):
+        while True:
+            card = generate_bingo_card()
+
+            # Convertir matriz a tupla hashable
+            signature = tuple(tuple(row) for row in card)
+
+            if signature not in generated:
+                generated.add(signature)
+                serial = f"CARD{str(i+1).zfill(5)}"
+                cards_list.append((serial, card))
+                break
+    ##cards_list = [(f"CARD{str(i+1).zfill(5)}", generate_bingo_card()) for i in range(num_cards)]
     cards_data = []
     for idx, (serial, card) in enumerate(cards_list):
         page_pos = idx % CARDS_PER_PAGE
@@ -2025,7 +2084,20 @@ def main():
             iniciar_bingo(output_json)
         elif arg.isdigit():
             num_cards = int(arg)
-            cards_list = [(f"CARD{str(i+1).zfill(5)}", generate_bingo_card()) for i in range(num_cards)]
+            # --- Generación SIN DUPLICADOS para CLI ---
+            cards_list = []
+            generated = set()
+            for i in range(num_cards):
+                while True:
+                    card = generate_bingo_card()
+                    signature = tuple(tuple(row) for row in card)
+
+                    if signature not in generated:
+                        generated.add(signature)
+                        serial = f"CARD{str(i+1).zfill(5)}"
+                        cards_list.append((serial, card))
+                        break            
+            ##cards_list = [(f"CARD{str(i+1).zfill(5)}", generate_bingo_card()) for i in range(num_cards)]
             cards_data = []
             for serial, matrix in cards_list:
                 cards_data.append({"serial": serial, "matrix": matrix})

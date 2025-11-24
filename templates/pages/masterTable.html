@@ -143,17 +143,7 @@
 <button class="w-full bg-primary text-white font-bold py-4 px-6 rounded-lg text-xl shadow-lg hover:bg-primary/90 transition-colors duration-300 transform hover:scale-105">
                         Nuevo Juego
                     </button>
-<script>
-document.querySelector('button').addEventListener('click', async () => {
-    // Llama al endpoint Flask para reiniciar
-    await fetch('/reset', {method: 'POST'});
-    // Limpia el estado local
-    masterState = Array(76).fill(false);
-    cards.forEach(card=>{card.marks=Array(5).fill().map(()=>Array(5).fill(false)); card.won=false; card.aciertos=0;});
-    actualizarBolas();
-    actualizarProgreso();
-});
-</script>
+
 </div>
 </div>
 </main>
@@ -245,8 +235,15 @@ document.querySelector('button').addEventListener('click', async () => {
             });
         }
 
-        // Reiniciar juego
-        function reiniciarJuego() {
+        // Reiniciar juego (llama al backend y recarga cartones)
+        async function reiniciarJuego() {
+            try {
+                await fetch('/reset', {method: 'POST'});
+            } catch (e) {
+                console.warn('Error reiniciando en servidor:', e);
+            }
+            // Recargar cartones desde el servidor para excluir ganadores
+            await cargarCartones();
             masterState = Array(76).fill(false);
             cards.forEach(card=>{card.marks=Array(5).fill().map(()=>Array(5).fill(false)); card.won=false; card.aciertos=0;});
             actualizarBolas();
