@@ -814,138 +814,140 @@ def calcular_total(num_tablas):
 # ENDPOINT PARA REGISTRAR PARTICIPANTES
 @app.route('/api/registrarParticipante', methods=['POST'])
 def registrar_participante():
-    """
-    Registra un participante en la base de datos,
-    valida que las tablas existan y actualiza su estado.
-    
-    JSON esperado:
-    {
-        "nombre": "Juan Pérez",
-        "cedula": "0102030405",
-        "email": "juan@example.com",
-        "telefono": "0999999999",
-        "tablas": ["CARD00001...", "CARD00002..."],
-        "registrado_por": "ID o nombre del usuario que registra"
-    }
-    """
     try:
         participante_data = request.get_json(silent=True) or {}
 
         if not participante_data:
-            return jsonify({
-                "success": False,
-                "message": "No se proporcionaron datos del participante."
-            }), 400
+            return jsonify({"success": False, "message": "No se proporcionaron datos del participante."}), 400
 
+        # =======================
+        # CAMPOS DEL PARTICIPANTE
+        # =======================
         nombre = participante_data.get("nombre")
         apellido = participante_data.get("apellido", "")
         cedula = participante_data.get("cedula", "")
         tablas_seriales = participante_data.get("tablas", [])
         registrado_por = participante_data.get("registrado_por")
 
-        # Si registrado_por viene como string ObjectId, convertirlo
-        if registrado_por:
-            try:
-                registrado_por = ObjectId(registrado_por)
-            except:
-                return jsonify({
-                    "success": False,
-                    "message": "El campo 'registrado_por' debe ser un ID de usuario válido."
-                }), 400
-
-        if not nombre:
-            return jsonify({
-                "success": False,
-                "message": "El campo 'nombre' es obligatorio."
-            }), 400
-
-        if not cedula:
-            return jsonify({
-                "success": False,
-                "message": "El campo 'cedula' es obligatorio."
-            }), 400
-
-        if not tablas_seriales:
-            return jsonify({
-                "success": False,
-                "message": "Debe asignarse al menos una tabla al participante."
-            }), 400
-
+        # ================================
+        # VALIDAR Y CONVERTIR REGISTRADO POR
+        # ================================
         if not registrado_por:
             return jsonify({
                 "success": False,
                 "message": "Debe incluir el campo 'registrado_por' (usuario que realiza el registro)."
             }), 400
-        
 
+        try:
+            registrado_por = ObjectId(registrado_por)
+        except:
+            return jsonify({
+                "success": False,
+                "message": "El campo 'registrado_por' debe ser un ID de usuario válido."
+            }), 400
 
-        # --- 🔍 VALIDAR PARTICIPANTE DUPLICADO POR CÉDULA ---
+        # ================================
+        # OBTENER USUARIO LOGUEADO
+        # ================================
+        user_doc = mongo_collection_users.find_one({"_id": registrado_por})
+
+        if not user_doc:
+            return jsonify({"success": False, "message": "Usuario no encontrado."}), 404
+
+        totalTables = user_doc.get("totalTables", 0)
+        usedTables = user_doc.get("usedTables", 0)
+        fromSerial = user_doc.get("fromSerial")
+        toSerial = user_doc.get("toSerial")
+
+        remaining = totalTables - usedTables
+        num_tablas = len(tablas_seriales)
+
+        # ================================
+        # VALIDACIONES DE TABLAS DISPONIBLES
+        # ================================
+        if totalTables > 0 and remaining <= 0:
+            return jsonify({"success": False, "message": "Ya no tienes tablas disponibles."}), 400
+
+        if num_tablas > remaining:
+            return jsonify({
+                "success": False,
+                "message": f"No puedes asignar {num_tablas} tablas. Solo tienes {remaining} disponibles."
+            }), 400
+
+        # ================================
+        # VALIDACIONES DE CAMPOS OBLIGATORIOS
+        # ================================
+        if not nombre:
+            return jsonify({"success": False, "message": "El campo 'nombre' es obligatorio."}), 400
+
+        if not cedula:
+            return jsonify({"success": False, "message": "El campo 'cedula' es obligatorio."}), 400
+
+        if not tablas_seriales:
+            return jsonify({"success": False, "message": "Debe asignarse al menos una tabla al participante."}), 400
+
+        # ================================
+        # VALIDAR DUPLICADO POR CÉDULA
+        # ================================
         participante_existente = mongo_collection_participantes.find_one({"cedula": cedula})
         if participante_existente:
             animador_nombre = "desconocido"
 
-            # Buscar el usuario que registró al participante
             if participante_existente.get("registrado_por"):
-                usuario_registrador = mongo_collection_users.find_one(
+                usuario_reg = mongo_collection_users.find_one(
                     {"_id": participante_existente["registrado_por"]},
                     {"nombres_completos": 1}
                 )
-                if usuario_registrador and usuario_registrador.get("nombres_completos"):
-                    animador_nombre = usuario_registrador["nombres_completos"]
+                if usuario_reg and usuario_reg.get("nombres_completos"):
+                    animador_nombre = usuario_reg["nombres_completos"]
 
             return jsonify({
                 "success": False,
-                "message": f"El participante con cédula {cedula} ya fue registrado por: {animador_nombre}. "
-                        f"Para adjuntar más cartones, hágalo desde la opción de 'Agregar Cartones' en el panel de participantes."
+                "message": f"El participante con cédula {cedula} ya fue registrado por {animador_nombre}."
             }), 409
 
-
-        # --- Validar que las tablas existan ---
+        # ================================
+        # VALIDAR TABLAS
+        # ================================
         tablas_validas = []
         for t in tablas_seriales:
             try:
                 tablas_validas.append(ObjectId(t))
             except:
-                tabla = mongo_collection_tables.find_one({"serial": t})
-                if tabla:
-                    tablas_validas.append(tabla["_id"])
-                else:
+                # Validar serial dentro del rango permitido
+                if fromSerial and toSerial and not (fromSerial <= t <= toSerial):
                     return jsonify({
                         "success": False,
-                        "message": f"Tabla '{t}' no encontrada en la base de datos."
-                    }), 404
+                        "message": f"La tabla {t} está fuera del rango permitido ({fromSerial} a {toSerial})."
+                    }), 400
 
+                tabla = mongo_collection_tables.find_one({"serial": t})
+                if not tabla:
+                    return jsonify({"success": False, "message": f"Tabla '{t}' no encontrada."}), 404
+                tablas_validas.append(tabla["_id"])
+
+        # Verificar que no estén asignadas
         tablas_existentes = list(mongo_collection_tables.find(
-            {"_id": {"$in": tablas_validas}},
-            {"_id": 1, "stateAsigned": 1}
+            {"_id": {"$in": tablas_validas}}, {"stateAsigned": 1}
         ))
 
-        if len(tablas_existentes) != len(tablas_validas):
-            return jsonify({
-                "success": False,
-                "message": "Una o más tablas no existen en la base de datos."
-            }), 404
+        if any(t.get("stateAsigned") for t in tablas_existentes):
+            return jsonify({"success": False, "message": "Una o más tablas ya están asignadas."}), 400
 
-        tablas_asignadas = [t for t in tablas_existentes if t.get("stateAsigned")]
-        if tablas_asignadas:
-            return jsonify({
-                "success": False,
-                "message": "Una o más tablas ya están asignadas a otro participante."
-            }), 400
-        
-        # Calcular total según cantidad de tablas
-        num_tablas = len(tablas_seriales)
+        # ================================
+        # CALCULAR TOTAL
+        # ================================
         total_pagar = calcular_total(num_tablas)
-        #total_pagar = (num_tablas // 2) * 5 + (num_tablas % 2) * 3
 
-        # --- Crear participante ---
+        # ================================
+        # INSERTAR PARTICIPANTE
+        # ================================
         nuevo_participante = {
             "nombre": nombre,
             "apellido": apellido,
             "cedula": cedula,
             "celular": participante_data.get("celular", ""),
             "telefono": participante_data.get("telefono", participante_data.get("celular", "")),
-            "especialidad": participante_data.get("Especialidad", ""),
             "tipo": participante_data.get("tipo", "alumno"),
             "nivelCurso": participante_data.get("nivelCurso", ""),
             "paralelo": participante_data.get("paralelo", ""),
@@ -954,31 +956,34 @@ def registrar_participante():
             "grupoAdetitss": participante_data.get("grupoAdetitss", ""),
             "fecha_registro": datetime.now().isoformat(),
             "registrado_por": registrado_por,
-            "total_pagar": total_pagar  # 🆕 campo agregado
+            "total_pagar": total_pagar
         }
 
-        resultado = mongo_collection_participantes.insert_one(nuevo_participante)
+        result = mongo_collection_participantes.insert_one(nuevo_participante)
 
-        # --- Actualizar estado de las tablas asignadas ---
+        # Marcar tablas como asignadas
         mongo_collection_tables.update_many(
             {"_id": {"$in": tablas_validas}},
             {"$set": {"stateAsigned": True}}
         )
 
-        # 🆕 Actualizar el total vendido del usuario
+        # Actualizar contadores del usuario
         mongo_collection_users.update_one(
             {"_id": registrado_por},
-            {"$inc": {"total_vendido": total_pagar}}
+            {"$inc": {
+                "usedTables": num_tablas,
+                "total_vendido": total_pagar
+            }}
         )
 
-        # Convertir a formato serializable
-        nuevo_participante["_id"] = str(resultado.inserted_id)
+        # Formato JSON serializable
+        nuevo_participante["_id"] = str(result.inserted_id)
         nuevo_participante["registrado_por"] = str(registrado_por)
         nuevo_participante["tablas"] = [str(t) for t in tablas_validas]
 
         return jsonify({
             "success": True,
-            "message": "Participante registrado exitosamente y tablas actualizadas.",
+            "message": "Participante registrado exitosamente.",
             "participante": nuevo_participante
         }), 201
 
@@ -986,7 +991,7 @@ def registrar_participante():
         return jsonify({
             "success": False,
             "error": str(e),
-            "message": "Error al registrar el participante o actualizar las tablas."
+            "message": "Error al registrar el participante."
         }), 500
 
 # -------------------------
@@ -1218,44 +1223,41 @@ def login_user():
 
 # -------------------------
 # ENDPOINT PARA OBTENER LISTA DE PARTIPICIPANTES POR ANIMADOR
+def serialize_mongo_doc(doc):
+    for key, value in doc.items():
+        if isinstance(value, ObjectId):
+            doc[key] = str(value)
+        elif isinstance(value, list):
+            doc[key] = [str(v) if isinstance(v, ObjectId) else v for v in value]
+        elif isinstance(value, dict):
+            doc[key] = serialize_mongo_doc(value)
+    return doc
+
 @app.route('/api/participantes/por-usuario/<usuario_id>', methods=['GET'])
 def participantes_por_usuario_con_info(usuario_id):
-    """
-    Retorna los participantes registrados por un usuario y la información completa de ese usuario.
-    GET /api/participantes/por-usuario/<usuario_id>
-    """
     try:
-        # validar usuario_id
         try:
             usuario_obj_id = ObjectId(usuario_id)
         except Exception:
             return jsonify({"success": False, "message": "El ID del usuario no es válido."}), 400
 
-        # Obtener documento completo del usuario (si existe)
-        usuario_doc = mongo_collection_users.find_one({"_id": usuario_obj_id}, {"password": 0})  # ocultar password
+        usuario_doc = mongo_collection_users.find_one({"_id": usuario_obj_id}, {"password": 0})
         if not usuario_doc:
             return jsonify({"success": False, "message": "Usuario no encontrado."}), 404
 
-        # Obtener participantes registrados por ese usuario
+        # Convertir TODO el documento de usuario
+        usuario_doc = serialize_mongo_doc(usuario_doc)
+        usuario_doc["_id"] = str(usuario_doc["_id"])
+
         participantes_cursor = mongo_collection_participantes.find(
             {"registrado_por": usuario_obj_id}
         )
 
         participantes = []
         for p in participantes_cursor:
-            # convertir ObjectId a string en campos relevantes
+            p = serialize_mongo_doc(p)
             p["_id"] = str(p["_id"])
-            # Si tablas son ObjectId, convertirlas a string
-            tablas = p.get("tablas", [])
-            p["tablas"] = [str(t) if isinstance(t, ObjectId) else t for t in tablas]
-            # Si registrado_por es ObjectId, convertir a string (aunque ya lo sabemos)
-            if isinstance(p.get("registrado_por"), ObjectId):
-                p["registrado_por"] = str(p["registrado_por"])
             participantes.append(p)
-
-        # Preparar usuario_doc para devolver (sin password ni datos sensibles)
-        usuario_doc["_id"] = str(usuario_doc["_id"])
-        # Si tienes campos tipo ObjectId dentro del usuario, conviértelos si hace falta
 
         return jsonify({
             "success": True,
@@ -1267,7 +1269,7 @@ def participantes_por_usuario_con_info(usuario_id):
         return jsonify({
             "success": False,
             "error": str(e),
-            "message": "Error al obtener participantes por usuario."
+            "message": "Error al obtener participantes por usuario"
         }), 500
 
 
@@ -1275,13 +1277,6 @@ def participantes_por_usuario_con_info(usuario_id):
 # ENDPOINT PARA ELIMINAR PARTICIPANTE POR ANIMADOR
 @app.route('/api/participante/<participante_id>/<tipo_usuario>', methods=['DELETE'])
 def eliminar_participante(participante_id, tipo_usuario):
-    """
-    Elimina un participante solo si fue registrado por el usuario indicado.
-    JSON esperado:
-    {
-        "usuario_id": "ObjectId del usuario que intenta eliminar"
-    }
-    """
     try:
         data = request.get_json(silent=True) or {}
         usuario_id = data.get("usuario_id")
@@ -1295,39 +1290,50 @@ def eliminar_participante(participante_id, tipo_usuario):
         except Exception:
             return jsonify({"success": False, "message": "ID de usuario o participante inválido."}), 400
 
-        # Buscar el participante
+        # Buscar participante
         participante = mongo_collection_participantes.find_one({"_id": participante_obj_id})
-
         if not participante:
             return jsonify({"success": False, "message": "Participante no encontrado."}), 404
 
-        # Validar que pertenece al usuario
+        # Verificar si pertenece al usuario (excepto admin tipo 0)
         if str(participante.get("registrado_por")) != str(usuario_obj_id) and tipo_usuario != '0':
             return jsonify({
                 "success": False,
                 "message": "No tiene permiso para eliminar este participante."
             }), 403
 
-        # Liberar las tablas asociadas (si existen)
+        # TABLAS ASIGNADAS
         tablas = participante.get("tablas", [])
-        if tablas:
-            tablas_obj = []
-            for t in tablas:
-                try:
-                    tablas_obj.append(ObjectId(t))
-                except:
-                    continue
+        num_tablas = len(tablas)
+
+        # Convertir a ObjectId las tablas
+        tablas_obj_ids = []
+        for tid in tablas:
+            try:
+                tablas_obj_ids.append(ObjectId(tid))
+            except:
+                pass
+
+        # 1️⃣ LIBERAR TABLAS DEL PARTICIPANTE
+        if tablas_obj_ids:
             mongo_collection_tables.update_many(
-                {"_id": {"$in": tablas_obj}},
+                {"_id": {"$in": tablas_obj_ids}},
                 {"$set": {"stateAsigned": False}}
             )
 
-        # Eliminar participante
+        # 2️⃣ RESTAR USED TABLES AL USUARIO REGISTRADOR
+        mongo_collection_users.update_one(
+            {"_id": participante.get("registrado_por")},
+            {"$inc": {"usedTables": -num_tablas}}
+        )
+
+        # 3️⃣ ELIMINAR PARTICIPANTE
         mongo_collection_participantes.delete_one({"_id": participante_obj_id})
 
         return jsonify({
             "success": True,
-            "message": "Participante eliminado correctamente."
+            "message": "Participante eliminado correctamente. Tablas liberadas.",
+            "tablas_liberadas": num_tablas
         }), 200
 
     except Exception as e:
@@ -1342,15 +1348,6 @@ def eliminar_participante(participante_id, tipo_usuario):
 # ENDPOINT PARA BORRAR UNA TABLA DE UN PARTICIPANTE POR USUARIO 
 @app.route('/api/participante/<participante_id>/tabla/<tabla_id>/<tipo_usuario>', methods=['DELETE'])
 def eliminar_tabla_de_participante(participante_id, tabla_id, tipo_usuario):
-    """
-    Elimina una tabla (cartón) asociada a un participante,
-    solo si el participante fue registrado por el usuario autenticado.
-
-    JSON esperado:
-    {
-        "usuario_id": "ObjectId del usuario autenticado"
-    }
-    """
     try:
         data = request.get_json(silent=True) or {}
         usuario_id = data.get("usuario_id")
@@ -1368,35 +1365,40 @@ def eliminar_tabla_de_participante(participante_id, tabla_id, tipo_usuario):
                 "message": "ID de participante, tabla o usuario inválido."
             }), 400
 
-        # Buscar participante
         participante = mongo_collection_participantes.find_one({"_id": participante_obj_id})
         if not participante:
             return jsonify({"success": False, "message": "Participante no encontrado."}), 404
 
-        # Validar que el participante pertenece al usuario
+        # Validar permisos
         if str(participante.get("registrado_por")) != str(usuario_obj_id) and tipo_usuario != '0':
             return jsonify({
                 "success": False,
                 "message": "No tiene permiso para modificar este participante."
             }), 403
 
-        # Verificar si la tabla está asignada al participante
+        # Verificar si la tabla está realmente asignada
         if tabla_obj_id not in [ObjectId(t) for t in participante.get("tablas", [])]:
             return jsonify({
                 "success": False,
                 "message": "La tabla no pertenece a este participante."
             }), 404
 
-        # Eliminar la tabla del participante
+        # 1️⃣ QUITAR TABLA DEL PARTICIPANTE
         mongo_collection_participantes.update_one(
             {"_id": participante_obj_id},
             {"$pull": {"tablas": tabla_obj_id}}
         )
 
-        # Marcar la tabla como no asignada en la colección de tablas
+        # 2️⃣ MARCAR TABLA COMO DESASIGNADA
         mongo_collection_tables.update_one(
             {"_id": tabla_obj_id},
             {"$set": {"stateAsigned": False}}
+        )
+
+        # 3️⃣ RESTAR SOLO 1 TABLA AL USUARIO
+        mongo_collection_users.update_one(
+            {"_id": participante.get("registrado_por")},
+            {"$inc": {"usedTables": -1}}
         )
 
         return jsonify({
@@ -1607,6 +1609,175 @@ def obtener_tabla_especifica(tabla_id):
             "error": str(e),
             "message": "Error al obtener la tabla."
         }), 500
+    
+# ==========================
+#  ASIGNAR TABLAS A UN USUARIO (RESERVA)
+# ==========================
+@app.route('/api/users/<user_id>/assign_tables', methods=['POST'])
+def assign_tables_to_user(user_id):
+    try:
+        data = request.get_json(silent=True) or {}
+        total = int(data.get('totalTables', 0))
+
+        if total <= 0:
+            return jsonify({"success": False, "message": "Debe ingresar una cantidad válida"}), 400
+
+        # validar ObjectId
+        try:
+            user_obj_id = ObjectId(user_id)
+        except:
+            return jsonify({"success": False, "message": "ID de usuario inválido"}), 400
+
+        user = mongo_collection_users.find_one({"_id": user_obj_id})
+        if not user:
+            return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
+
+        # Si ya tiene tablas asignadas previamente
+        if user.get("totalTables"):
+            return jsonify({
+                "success": False,
+                "message": "Este usuario ya tiene tablas reservadas."
+            }), 400
+
+        # Buscar tablas libres (sin asignar y sin reservar)
+        available_cursor = mongo_collection_tables.find({
+            "$or": [{"stateAsigned": False}, {"stateAsigned": {"$exists": False}}],
+            "$or": [{"stateReserved": False}, {"stateReserved": {"$exists": False}}]
+        }).sort("serial", 1).limit(total)
+
+        available = list(available_cursor)
+
+        if len(available) < total:
+            return jsonify({
+                "success": False,
+                "message": "No hay suficientes tablas disponibles."
+            }), 400
+
+        table_ids = [t["_id"] for t in available]
+        from_serial = available[0]["serial"]
+        to_serial = available[-1]["serial"]
+
+        # Marcar tablas como reservadas
+        mongo_collection_tables.update_many(
+            {"_id": {"$in": table_ids}},
+            {"$set": {
+                "stateReserved": True,
+                "reservedTo": user_obj_id
+            }}
+        )
+
+        # Guardar info en Users
+        mongo_collection_users.update_one(
+            {"_id": user_obj_id},
+            {"$set": {
+                "totalTables": total,
+                "usedTables": 0,
+                "fromSerial": from_serial,
+                "toSerial": to_serial,
+                "reserved_table_ids": table_ids
+            }}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Tablas reservadas exitosamente",
+            "from": from_serial,
+            "to": to_serial
+        }), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+
+# ==========================
+#  REGISTRAR PARTICIPANTE AUTOMÁTICO (USA RESERVA)
+# ==========================
+@app.route('/api/registrarParticipanteAuto', methods=['POST'])
+def registrar_participante_auto():
+    try:
+        data = request.get_json(silent=True) or {}
+
+        nombre = data.get("nombre")
+        apellido = data.get("apellido", "")
+        cedula = data.get("cedula")
+        celular = data.get("celular", "")
+        registrado_por = data.get("registrado_por")
+        cantidad = int(data.get("cantidad_tablas", 1))
+
+        if not nombre or not cedula or not registrado_por:
+            return jsonify({"success": False, "message": "Nombre, cédula y registrado_por son obligatorios"}), 400
+
+        try:
+            user_obj_id = ObjectId(registrado_por)
+        except:
+            return jsonify({"success": False, "message": "ID de usuario inválido"}), 400
+
+        user = mongo_collection_users.find_one({"_id": user_obj_id})
+        if not user:
+            return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
+
+        total = int(user.get("totalTables", 0))
+        used = int(user.get("usedTables", 0))
+        reserved_ids = user.get("reserved_table_ids", [])
+
+        remaining = total - used
+        if remaining <= 0:
+            return jsonify({"success": False, "message": "Ya no tienes tablas disponibles"}), 400
+
+        if cantidad > remaining:
+            return jsonify({"success": False, "message": f"Sólo quedan {remaining} tablas disponibles"}), 400
+
+        # Obtener las tablas a asignar en orden
+        assign_ids = reserved_ids[used: used + cantidad]
+
+        # Validar que no estén asignadas ya
+        for tid in assign_ids:
+            tabla = mongo_collection_tables.find_one({"_id": tid})
+            if tabla.get("stateAsigned"): # type: ignore
+                return jsonify({
+                    "success": False,
+                    "message": f"La tabla {tabla['serial']} ya fue asignada previamente" # type: ignore
+                }), 400
+
+        # Insertar participante
+        participante_data = {
+            "nombre": nombre,
+            "apellido": apellido,
+            "cedula": cedula,
+            "celular": celular,
+            "tablas": assign_ids,
+            "registrado_por": user_obj_id,
+            "fecha_registro": datetime.now().isoformat()
+        }
+
+        insert_result = mongo_collection_participantes.insert_one(participante_data)
+        participante_id = insert_result.inserted_id
+
+        # Marcar tablas como asignadas
+        mongo_collection_tables.update_many(
+            {"_id": {"$in": assign_ids}},
+            {"$set": {
+                "stateAsigned": True,
+                "assignedToParticipant": participante_id
+            }}
+        )
+
+        # Incrementar usado
+        mongo_collection_users.update_one(
+            {"_id": user_obj_id},
+            {"$inc": {"usedTables": cantidad}}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Participante registrado correctamente",
+            "participante_id": str(participante_id)
+        }), 201
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
 
 # -------------------------
 # ENDPOINT PARA AGREGAR TABLAS A UN PARTICIPANTE
