@@ -685,32 +685,56 @@ def tabla_ganadora():
         }), 500
 
 # ENDPOINT PARA BUSCAR ESTUDIANTE POR CÉDULA
-@app.route('/api/estudiante/<cedula>', methods=['GET'])
-def buscar_estudiante(cedula):
+
+@app.route('/api/estudiante/<busqueda>', methods=['GET'])
+def buscar_estudiante(busqueda):
     """
-    Busca un estudiante por su número de cédula en la base de datos.
-    
-    Args:
-        cedula (str): Número de cédula del estudiante a buscar.
-        
-    Returns:
-        JSON con la información del estudiante o un mensaje de error si no se encuentra.
+    Busca un estudiante por cédula o por nombre completo.
+    Si 'busqueda' es numérica -> busca por Num documento.
+    Si contiene letras -> busca por apellidos y nombres.
     """
+
     try:
-        # Buscar el estudiante en la colección
-        estudiante = mongo_collection_students.find_one({"Num documento": cedula}, {"_id": 0})
-        
+        # --- Caso 1: Búsqueda por CÉDULA ---
+        if busqueda.isdigit():
+            estudiante = mongo_collection_students.find_one(
+                {"Num documento": busqueda},
+                {"_id": 0}
+            )
+            if estudiante:
+                return jsonify({"success": True, "estudiante": estudiante})
+            else:
+                return jsonify({
+                    "success": False,
+                    "message": f"No se encontró ningún estudiante con la cédula: {busqueda}"
+                }), 404
+
+        # --- Caso 2: Búsqueda por NOMBRE COMPLETO ---
+        palabras = busqueda.strip().upper().split()
+
+        # Construimos un array de condiciones con regex OR
+        condiciones = []
+        for p in palabras:
+            regex = {"$regex": p, "$options": "i"}  # insensible a mayúsculas
+
+            condiciones.append({"Primer Apellido": regex})
+            condiciones.append({"Segundo Apellido": regex})
+            condiciones.append({"Nombre": regex})
+
+        # Búsqueda: cualquier palabra puede coincidir en cualquier campo
+        estudiante = mongo_collection_students.find_one(
+            {"$or": condiciones},
+            {"_id": 0}
+        )
+
         if estudiante:
-            return jsonify({
-                "success": True,
-                "estudiante": estudiante
-            })
+            return jsonify({"success": True, "estudiante": estudiante})
         else:
             return jsonify({
                 "success": False,
-                "message": f"No se encontró ningún estudiante con la cédula: {cedula}"
+                "message": f"No se encontró ningún estudiante que coincida con: {busqueda}"
             }), 404
-            
+
     except Exception as e:
         return jsonify({
             "success": False,
@@ -718,8 +742,7 @@ def buscar_estudiante(cedula):
             "message": "Error al buscar el estudiante en la base de datos"
         }), 500
 
-
-# ENDPOINT PARA BUSCAR ESTUDIANTE POR CÉDULA
+# ENDPOINT PARA BUSCAR DOCENTE POR CÉDULA
 @app.route('/api/docente/<cedula>', methods=['GET'])
 def buscar_docente(cedula):
     """
