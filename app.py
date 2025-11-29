@@ -121,6 +121,16 @@ def nearest_index(centers, value):
     best = min(range(len(centers)), key=lambda i: abs(centers[i] - value))
     return best
 
+
+def safe_int(val, default=0):
+    """Convierte a int de forma segura; si val es None o inválido, devuelve default."""
+    try:
+        if val is None:
+            return default
+        return int(val)
+    except Exception:
+        return default
+
 # -------------------------
 # Nueva: extraer_matrices_pdf (soporta 4 cartones/hoja + fallback)
 # -------------------------
@@ -547,7 +557,7 @@ def reset():
 @app.route('/generate', methods=['POST'])
 def generate_cards():
     data = request.get_json(silent=True) or {}
-    num_cards = int(data.get("num_cards", 1))
+    num_cards = safe_int(data.get("num_cards"), 1)
     PAGE_WIDTH, PAGE_HEIGHT = letter
     MARGIN_X = 0.5 * inch
     MARGIN_Y = 0.5 * inch
@@ -938,11 +948,18 @@ def registrar_participante():
                 tablas_validas.append(ObjectId(t))
             except:
                 # Validar serial dentro del rango permitido
-                if fromSerial and toSerial and not (fromSerial <= t <= toSerial):
-                    return jsonify({
-                        "success": False,
-                        "message": f"La tabla {t} está fuera del rango permitido ({fromSerial} a {toSerial})."
-                    }), 400
+                if fromSerial and toSerial:
+                    # manejar rangos ascendentes o descendentes (admin reserva desde el final)
+                    if fromSerial <= toSerial:
+                        in_range = fromSerial <= t <= toSerial
+                    else:
+                        in_range = toSerial <= t <= fromSerial
+                    if not in_range:
+                        return jsonify({
+                            "success": False,
+                            "message": f"La tabla {t} está fuera del rango permitido ({fromSerial} a {toSerial})."
+                        }), 400
+                
 
                 tabla = mongo_collection_tables.find_one({"serial": t})
                 if not tabla:
@@ -1640,8 +1657,18 @@ def obtener_tabla_especifica(tabla_id):
 def assign_tables_to_user(user_id):
     try:
         data = request.get_json(silent=True) or {}
-        total = int(data.get('totalTables', 0))
+        # Verificar que el campo totalTables esté presente y no nulo
+        if 'totalTables' not in data or data.get('totalTables') is None:
+            return jsonify({"success": False, "message": "Se requiere totalTables en el body"}), 400
+        total = safe_int(data.get('totalTables'), 0)
+        # Se espera que el frontend envíe el id del usuario que hace la solicitud
+        requesting_user_id = data.get('requesting_user_id')
 
+        if not requesting_user_id:
+            return jsonify({"success": False, "message": "Se requiere el ID del usuario solicitante"}), 400
+
+        # Log de depuración pequeño para ver qué valor llegó
+        print(f"[assign_tables] total received: {data.get('totalTables')}, parsed total: {total}, requesting_user_id: {requesting_user_id}")
         if total <= 0:
             return jsonify({"success": False, "message": "Debe ingresar una cantidad válida"}), 400
 
@@ -1655,6 +1682,22 @@ def assign_tables_to_user(user_id):
         if not user:
             return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
 
+        # Validar que el que solicita la reserva sea admin (tipo_usuario == 0)
+        try:
+            requesting_user_obj_id = ObjectId(requesting_user_id)
+        except:
+            return jsonify({"success": False, "message": "ID del usuario solicitante inválido"}), 400
+
+        requesting_user = mongo_collection_users.find_one({"_id": requesting_user_obj_id})
+        if not requesting_user:
+            return jsonify({"success": False, "message": "Usuario solicitante no encontrado"}), 404
+
+        # Solo admin puede auto-reservar tablas
+        # Nota: esta validación se basa en el campo 'tipo_usuario' del documento del usuario.
+        # En una implementación segura debería validarse con un token de sesión o JWT para evitar spoofing.
+        if safe_int(requesting_user.get("tipo_usuario"), 1) != 0:
+            return jsonify({"success": False, "message": "Solo usuario admin puede reservar tablas desde el último código."}), 403
+
         # Si ya tiene tablas asignadas previamente
         if user.get("totalTables"):
             return jsonify({
@@ -1663,10 +1706,14 @@ def assign_tables_to_user(user_id):
             }), 400
 
         # Buscar tablas libres (sin asignar y sin reservar)
+        # Si la reserva la solicita un admin, tomar las tablas desde el final (orden descendente)
+        # Esto permite que el admin "autoasigne" sus tablas desde el último código disponible (ej CARD02000 → CARD01999 ...)
+        sort_direction = -1 if safe_int(requesting_user.get("tipo_usuario"), 1) == 0 else 1
+
         available_cursor = mongo_collection_tables.find({
             "$or": [{"stateAsigned": False}, {"stateAsigned": {"$exists": False}}],
             "$or": [{"stateReserved": False}, {"stateReserved": {"$exists": False}}]
-        }).sort("serial", 1).limit(total)
+        }).sort("serial", sort_direction).limit(total)
 
         available = list(available_cursor)
 
@@ -1726,7 +1773,7 @@ def registrar_participante_auto():
         cedula = data.get("cedula")
         celular = data.get("celular", "")
         registrado_por = data.get("registrado_por")
-        cantidad = int(data.get("cantidad_tablas", 1))
+        cantidad = safe_int(data.get("cantidad_tablas"), 1)
 
         if not nombre or not cedula or not registrado_por:
             return jsonify({"success": False, "message": "Nombre, cédula y registrado_por son obligatorios"}), 400
@@ -1740,8 +1787,8 @@ def registrar_participante_auto():
         if not user:
             return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
 
-        total = int(user.get("totalTables", 0))
-        used = int(user.get("usedTables", 0))
+        total = safe_int(user.get("totalTables"), 0)
+        used = safe_int(user.get("usedTables"), 0)
         reserved_ids = user.get("reserved_table_ids", [])
 
         remaining = total - used

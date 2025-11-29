@@ -60,6 +60,12 @@ Sistema web para la gestión y administración de juegos de bingo, pensado para 
 2. **Carga de cartones:**
    - Sube archivos JSON de cartones a través de la interfaz web o colócalos en la carpeta `jsons/`.
 
+   ### 🧪 Prueba rápida de auto-asignación (admin)
+
+   - Inicia sesión con un usuario admin (tipo_usuario = 0) en la interfaz de administración.
+   - En el panel de usuarios (Admin), intenta reservar tablas con la opción de "Añadir Participante"; el sistema pedirá la cantidad de tablas a reservar y, si es admin, tomará las tablas desde el último código disponible hacia atrás.
+   - Verifica en la tabla de cartones que las tablas reservadas aparecen marcadas como reservadas (`stateReserved`) y que en el administrador de usuario aparecen `fromSerial` y `toSerial` con los rangos correctos (podrán estar invertidos si la reserva fue desde el final).
+
 3. **Gestión de partidas:**
    - Accede a la interfaz web para iniciar, controlar y finalizar partidas.
    - Visualiza el historial de ganadores y exporta reportes.
@@ -78,6 +84,8 @@ Sistema web para la gestión y administración de juegos de bingo, pensado para 
 - No subas archivos sensibles o datos personales a las carpetas públicas.
 - Los archivos en `jsons/` y `upload/` se ignoran por defecto en Git, salvo el archivo `.gitkeep` que mantiene la estructura.
 - Revisa la licencia antes de usar el sistema en entornos comerciales.
+
+- Nota sobre auto-asignación de cartones: Solo el usuario con rol admin (tipo_usuario = 0) puede reservar tableros automáticamente. Cuando un admin reserva tableros, el sistema toma las tablas disponibles desde el último código hacia atrás (ej: CARD02000, CARD01999, ...). Esto está pensado para que el admin pueda autoasignarse grandes bloques de cartones desde el final.
 
 ---
 
