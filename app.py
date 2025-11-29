@@ -689,13 +689,13 @@ def tabla_ganadora():
 @app.route('/api/estudiante/<busqueda>', methods=['GET'])
 def buscar_estudiante(busqueda):
     """
-    Busca un estudiante por cédula o por nombre completo.
-    Si 'busqueda' es numérica -> busca por Num documento.
-    Si contiene letras -> busca por apellidos y nombres.
+    Busca un estudiante únicamente por:
+    - Cédula (si es numérica)
+    - Nombre completo exacto (Primer Apellido, Segundo Apellido, Nombre)
     """
 
     try:
-        # --- Caso 1: Búsqueda por CÉDULA ---
+        # --- Caso 1: Búsqueda por CÉDULA (solo números) ---
         if busqueda.isdigit():
             estudiante = mongo_collection_students.find_one(
                 {"Num documento": busqueda},
@@ -703,37 +703,42 @@ def buscar_estudiante(busqueda):
             )
             if estudiante:
                 return jsonify({"success": True, "estudiante": estudiante})
-            else:
-                return jsonify({
-                    "success": False,
-                    "message": f"No se encontró ningún estudiante con la cédula: {busqueda}"
-                }), 404
 
-        # --- Caso 2: Búsqueda por NOMBRE COMPLETO ---
+            return jsonify({
+                "success": False,
+                "message": f"No se encontró ningún estudiante con la cédula: {busqueda}"
+            }), 404
+
+        # --- Caso 2: Búsqueda por NOMBRE COMPLETO EXACTO ---
         palabras = busqueda.strip().upper().split()
 
-        # Construimos un array de condiciones con regex OR
-        condiciones = []
-        for p in palabras:
-            regex = {"$regex": p, "$options": "i"}  # insensible a mayúsculas
+        # Verificar formato: 2 apellidos + nombre(s)
+        if len(palabras) < 3:
+            return jsonify({
+                "success": False,
+                "message": "Debes enviar el nombre completo: Primer Apellido, Segundo Apellido y Nombre(s)."
+            }), 400
 
-            condiciones.append({"Primer Apellido": regex})
-            condiciones.append({"Segundo Apellido": regex})
-            condiciones.append({"Nombre": regex})
+        primer_apellido = palabras[0]
+        segundo_apellido = palabras[1]
+        nombre = " ".join(palabras[2:])   # Restante es el nombre completo
 
-        # Búsqueda: cualquier palabra puede coincidir en cualquier campo
         estudiante = mongo_collection_students.find_one(
-            {"$or": condiciones},
+            {
+                "Primer Apellido": primer_apellido,
+                "Segundo Apellido": segundo_apellido,
+                "Nombre": nombre
+            },
             {"_id": 0}
         )
 
         if estudiante:
             return jsonify({"success": True, "estudiante": estudiante})
-        else:
-            return jsonify({
-                "success": False,
-                "message": f"No se encontró ningún estudiante que coincida con: {busqueda}"
-            }), 404
+
+        return jsonify({
+            "success": False,
+            "message": f"No se encontró ningún estudiante con el nombre completo: {busqueda}"
+        }), 404
 
     except Exception as e:
         return jsonify({
@@ -742,33 +747,62 @@ def buscar_estudiante(busqueda):
             "message": "Error al buscar el estudiante en la base de datos"
         }), 500
 
-# ENDPOINT PARA BUSCAR DOCENTE POR CÉDULA
-@app.route('/api/docente/<cedula>', methods=['GET'])
-def buscar_docente(cedula):
+# ENDPOINT PARA BUSCAR DOCENTE POR CÉDULA O NOMBRE COMPLETO
+@app.route('/api/docente/<busqueda>', methods=['GET'])
+def buscar_docente(busqueda):
     """
-    Busca un docente por su número de cédula en la base de datos.
-    
-    Args:
-        cedula (str): Número de cédula del docente a buscar.
-        
-    Returns:
-        JSON con la información del docente o un mensaje de error si no se encuentra.
+    Busca un docente por:
+    - Cédula (si es numérica)
+    - Nombre completo exacto (Primer Apellido, Segundo Apellido, Nombre)
     """
+
     try:
-        # Buscar el docente en la colección
-        docente = mongo_collection_teachers.find_one({"Cedula": cedula}, {"_id": 0})
-        
-        if docente:
-            return jsonify({
-                "success": True,
-                "docente": docente
-            })
-        else:
+        # Caso 1: Búsqueda por cédula si son solo números
+        if busqueda.isdigit():
+            docente = mongo_collection_teachers.find_one(
+                {"Cedula": busqueda},
+                {"_id": 0}
+            )
+
+            if docente:
+                return jsonify({"success": True, "docente": docente})
+
             return jsonify({
                 "success": False,
-                "message": f"No se encontró ningún docente con la cédula: {cedula}"
+                "message": f"No se encontró ningún docente con la cédula: {busqueda}"
             }), 404
-            
+
+        # Caso 2: Búsqueda por NOMBRE COMPLETO EXACTO
+        palabras = busqueda.strip().upper().split()
+
+        # Deben existir: 2 apellidos + 1 nombre mínimo
+        if len(palabras) < 3:
+            return jsonify({
+                "success": False,
+                "message": "Debes ingresar el nombre completo: Primer Apellido, Segundo Apellido y Nombre(s)."
+            }), 400
+
+        primer_apellido = palabras[0]
+        segundo_apellido = palabras[1]
+        nombre = " ".join(palabras[2:])   # Nombre completo (puede tener varias palabras)
+
+        docente = mongo_collection_teachers.find_one(
+            {
+                "Primer Apellido": primer_apellido,
+                "Segundo Apellido": segundo_apellido,
+                "Nombre": nombre
+            },
+            {"_id": 0}
+        )
+
+        if docente:
+            return jsonify({"success": True, "docente": docente})
+
+        return jsonify({
+            "success": False,
+            "message": f"No se encontró ningún docente con el nombre completo: {busqueda}"
+        }), 404
+
     except Exception as e:
         return jsonify({
             "success": False,
