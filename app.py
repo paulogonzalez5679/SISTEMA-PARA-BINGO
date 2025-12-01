@@ -312,6 +312,70 @@ def check_winner_py(marks):
     return False
 
 
+# --- Validar y corregir contadores de tablas asignadas ---
+def validar_y_corregir_tablas_usuario(usuario_id):
+    """
+    Valida y corrige los contadores de tablas asignadas para un usuario específico.
+    
+    Retorna:
+    - total_asignadas: Número real de tablas asignadas a participantes del usuario
+    - used_tables_db: Valor en la BD
+    - diferencia: Diferencia entre real y en BD
+    - corregido: Si fue corregido o no
+    """
+    try:
+        usuario_obj_id = ObjectId(usuario_id) if isinstance(usuario_id, str) else usuario_id
+        
+        # Obtener usuario
+        usuario = mongo_collection_users.find_one({"_id": usuario_obj_id})
+        if not usuario:
+            return {"error": "Usuario no encontrado"}
+        
+        # Contar participantes registrados por este usuario
+        participantes = list(mongo_collection_participantes.find({"registrado_por": usuario_obj_id}))
+        
+        # Contar tablas reales asignadas (sumar tablas de cada participante)
+        total_tablas_reales = 0
+        for p in participantes:
+            tablas = p.get("tablas", [])
+            total_tablas_reales += len(tablas)
+        
+        # Valor en la BD
+        used_tables_bd = usuario.get("usedTables", 0)
+        
+        # Diferencia
+        diferencia = used_tables_bd - total_tablas_reales
+        
+        # Si hay diferencia, corregir
+        if diferencia != 0:
+            mongo_collection_users.update_one(
+                {"_id": usuario_obj_id},
+                {"$set": {"usedTables": total_tablas_reales}}
+            )
+            corregido = True
+        else:
+            corregido = False
+        
+        return {
+            "success": True,
+            "usuario_id": str(usuario_obj_id),
+            "total_participantes": len(participantes),
+            "tablas_reales_asignadas": total_tablas_reales,
+            "used_tables_bd_anterior": used_tables_bd,
+            "used_tables_bd_nuevo": total_tablas_reales,
+            "diferencia": diferencia,
+            "corregido": corregido,
+            "totalTables": usuario.get("totalTables", 0),
+            "disponibles_ahora": usuario.get("totalTables", 0) - total_tablas_reales
+        }
+        
+    except Exception as e:
+        return {
+            "error": str(e),
+            "success": False
+        }
+
+
 # ==========================
 # JUEGO DE BINGO
 # ==========================
@@ -1293,6 +1357,39 @@ def login_user():
             "paralelo": user.get("paralelo")
         }
     }), 200
+
+
+# -------------------------
+# ENDPOINT PARA VALIDAR Y CORREGIR TABLAS DE UN USUARIO
+# -------------------------
+@app.route('/api/validar-tablas/<usuario_id>', methods=['GET', 'POST'])
+def validar_tablas_usuario(usuario_id):
+    """
+    Valida y opcionalmente corrige los contadores de tablas asignadas para un usuario.
+    
+    GET: Solo valida sin corregir
+    POST: Valida y corrige si hay discrepancias
+    
+    Retorna:
+    - tablas_reales_asignadas: número de tablas realmente asignadas
+    - used_tables_bd: valor actual en la BD
+    - diferencia: diferencia entre lo real y lo reportado
+    - corregido: si fue corregido (solo en POST)
+    """
+    try:
+        resultado = validar_y_corregir_tablas_usuario(usuario_id)
+        
+        if "error" in resultado:
+            return jsonify({"success": False, "error": resultado["error"]}), 400
+        
+        return jsonify(resultado), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "Error al validar tablas del usuario"
+        }), 500
 
 
 # -------------------------
