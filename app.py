@@ -321,6 +321,7 @@ def validar_y_corregir_tablas_usuario(usuario_id):
     - total_asignadas: Número real de tablas asignadas a participantes del usuario
     - used_tables_db: Valor en la BD
     - diferencia: Diferencia entre real y en BD
+    - tablas_disponibles: Lista de seriales de tablas disponibles
     - corregido: Si fue corregido o no
     """
     try:
@@ -356,9 +357,36 @@ def validar_y_corregir_tablas_usuario(usuario_id):
         else:
             corregido = False
         
+        # Obtener tablas disponibles (no asignadas) dentro del rango del usuario
+        tablas_disponibles = []
+        fromSerial = usuario.get('fromSerial')
+        toSerial = usuario.get('toSerial')
+        
+        if fromSerial and toSerial:
+            # Determinar el rango (puede ser ascendente o descendente)
+            if fromSerial <= toSerial:
+                query = {
+                    "serial": {"$gte": fromSerial, "$lte": toSerial},
+                    "stateAsigned": False
+                }
+            else:
+                query = {
+                    "serial": {"$lte": fromSerial, "$gte": toSerial},
+                    "stateAsigned": False
+                }
+            
+            tablas_disp = list(mongo_collection_tables.find(
+                query,
+                {"serial": 1}
+            ).sort("serial", 1))
+            
+            tablas_disponibles = [t['serial'] for t in tablas_disp]
+        
         return {
             "success": True,
             "usuario_id": str(usuario_obj_id),
+            "usuario": usuario.get("usuario", "N/A"),
+            "nombres_completos": usuario.get("nombres_completos", "N/A"),
             "total_participantes": len(participantes),
             "tablas_reales_asignadas": total_tablas_reales,
             "used_tables_bd_anterior": used_tables_bd,
@@ -366,7 +394,12 @@ def validar_y_corregir_tablas_usuario(usuario_id):
             "diferencia": diferencia,
             "corregido": corregido,
             "totalTables": usuario.get("totalTables", 0),
-            "disponibles_ahora": usuario.get("totalTables", 0) - total_tablas_reales
+            "disponibles_ahora": usuario.get("totalTables", 0) - total_tablas_reales,
+            "rango_tablas": {
+                "desde": fromSerial,
+                "hasta": toSerial
+            },
+            "tablas_disponibles": tablas_disponibles
         }
         
     except Exception as e:
@@ -1130,6 +1163,141 @@ def registrar_participante():
             "success": False,
             "error": str(e),
             "message": "Error al registrar el participante."
+        }), 500
+
+# -------------------------
+# ENDPOINT PARA OBTENER TABLAS CONSECUTIVAS DISPONIBLES
+# -------------------------
+@app.route('/api/obtenerTablasConsecutivas', methods=['POST'])
+def obtener_tablas_consecutivas():
+    """
+    Obtiene los códigos de tablas consecutivas disponibles para asignarlas a un participante.
+    No asigna ni modifica, solo devuelve los códigos que se pueden usar.
+    
+    JSON esperado:
+    {
+        "usuario_id": "ObjectId del usuario",
+        "cantidad_tablas": número de tablas que necesitas
+    }
+    
+    Respuesta:
+    {
+        "success": true,
+        "message": "Tablas disponibles obtenidas correctamente",
+        "tablas_consecutivas": ["CARD004", "CARD005"],
+        "cantidad": 2
+    }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        
+        usuario_id = data.get("usuario_id")
+        cantidad_tablas = safe_int(data.get("cantidad_tablas"), 0)
+        
+        # Validaciones básicas
+        if not usuario_id:
+            return jsonify({
+                "success": False,
+                "message": "usuario_id es obligatorio."
+            }), 400
+        
+        if cantidad_tablas <= 0:
+            return jsonify({
+                "success": False,
+                "message": "La cantidad de tablas debe ser mayor a 0."
+            }), 400
+        
+        # Convertir a ObjectId
+        try:
+            usuario_obj_id = ObjectId(usuario_id)
+        except:
+            return jsonify({
+                "success": False,
+                "message": "usuario_id inválido."
+            }), 400
+        
+        # Obtener usuario
+        usuario = mongo_collection_users.find_one({"_id": usuario_obj_id})
+        if not usuario:
+            return jsonify({
+                "success": False,
+                "message": "Usuario no encontrado."
+            }), 404
+        
+        from_serial = usuario.get("fromSerial")
+        to_serial = usuario.get("toSerial")
+        
+        if not from_serial or not to_serial:
+            return jsonify({
+                "success": False,
+                "message": "El usuario no tiene un rango de tablas asignado."
+            }), 400
+        
+        # Extraer números de los seriales (ej: "CARD001" -> 1)
+        def extraer_numero(serial):
+            match = re.search(r'\d+', serial)
+            return int(match.group()) if match else 0
+        
+        from_num = extraer_numero(from_serial)
+        to_num = extraer_numero(to_serial)
+        
+        if from_num <= 0 or to_num <= 0:
+            return jsonify({
+                "success": False,
+                "message": "No se pudo extraer los números de los seriales del usuario."
+            }), 400
+        
+        # Obtener todas las tablas del rango del usuario, ordenadas
+        tablas_rango = list(mongo_collection_tables.find({
+            "serial": {"$regex": f"^CARD", "$options": "i"}
+        }).sort("serial", 1))
+        
+        # Filtrar solo las del rango del usuario
+        tablas_usuario = []
+        for tabla in tablas_rango:
+            num = extraer_numero(tabla.get("serial", ""))
+            if from_num <= num <= to_num:
+                tablas_usuario.append(tabla)
+        
+        if not tablas_usuario:
+            return jsonify({
+                "success": False,
+                "message": "No hay tablas en el rango asignado al usuario."
+            }), 400
+        
+        # Encontrar tablas disponibles en orden consecutivo
+        tablas_disponibles = []
+        for tabla in tablas_usuario:
+            # Si no está asignada a nadie
+            if not tabla.get("stateAsigned", False):
+                tablas_disponibles.append(tabla)
+            
+            # Si ya encontramos suficientes, detener
+            if len(tablas_disponibles) >= cantidad_tablas:
+                break
+        
+        # Verificar que hay suficientes tablas disponibles
+        if len(tablas_disponibles) < cantidad_tablas:
+            return jsonify({
+                "success": False,
+                "message": f"No hay suficientes tablas disponibles. Se encontraron {len(tablas_disponibles)} de {cantidad_tablas} solicitadas."
+            }), 400
+        
+        # Extraer solo los seriales
+        seriales_consecutivos = [t["serial"] for t in tablas_disponibles]
+        
+        return jsonify({
+            "success": True,
+            "message": "Tablas disponibles obtenidas correctamente.",
+            "tablas_consecutivas": seriales_consecutivos,
+            "cantidad": len(seriales_consecutivos)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "Error al obtener tablas consecutivas."
         }), 500
 
 # -------------------------
