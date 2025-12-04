@@ -10,10 +10,11 @@ from bson import ObjectId
 
 # Importar utilidades de corrección
 try:
-    from fix_duplicate_tablas import dedupe_all_participants_for_user, recalc_usedTables_for_user
+    from fix_duplicate_tablas import dedupe_all_participants_for_user, recalc_usedTables_for_user, merge_duplicate_participants_for_user
 except Exception:
     dedupe_all_participants_for_user = None
     recalc_usedTables_for_user = None
+    merge_duplicate_participants_for_user = None
 
 try:
     from corregir_stateAsigned import corregir_stateAsigned
@@ -110,7 +111,7 @@ def validar_usuario(usuario_id_str, auto_corregir=False):
 
         if do_orquestar:
             print('\n🔄 Iniciando orquestación de correcciones...')
-            # Dedupe participantes registrados por el usuario
+            # Dedupe participantes registrados por el usuario (limpia listas internas de tablas)
             if dedupe_all_participants_for_user:
                 try:
                     res_dedupe = dedupe_all_participants_for_user(usuario_id)
@@ -119,6 +120,27 @@ def validar_usuario(usuario_id_str, auto_corregir=False):
                     print(f"⚠️ Error en dedupe_all_participants_for_user: {e}")
             else:
                 print('⚠️ Módulo fix_duplicate_tablas no disponible. Omite dedupe.')
+
+            # Merge (consolidar documentos duplicados por cédula)
+            if merge_duplicate_participants_for_user:
+                try:
+                    if auto_corregir:
+                        # Si se solicitó auto_corregir, aplicar los cambios directamente
+                        print('\n🔧 Ejecutando MERGE de participantes duplicados (aplicando cambios)...')
+                        res_merge = merge_duplicate_participants_for_user(usuario_id, dry_run=False)
+                        print('\n✅ Merge aplicado. Resumen:')
+                        print(res_merge)
+                    else:
+                        # En modo interactivo, mostrar dry-run y no aplicar automáticamente
+                        print('\n🔍 Ejecutando MERGE en modo dry-run (no aplica cambios).')
+                        res_merge = merge_duplicate_participants_for_user(usuario_id, dry_run=True)
+                        print('\n🔎 Resultado (dry-run):')
+                        print(res_merge)
+                        print('\nPara aplicar los cambios, vuelve a ejecutar con --auto-corregir o ajusta el flujo.')
+                except Exception as e:
+                    print(f"⚠️ Error en merge_duplicate_participants_for_user: {e}")
+            else:
+                print('⚠️ merge_duplicate_participants_for_user no disponible. Omite consolidación de documentos.')
 
             # Corregir stateAsigned (este script preguntará internamente si debe aplicar cambios)
             if corregir_stateAsigned:

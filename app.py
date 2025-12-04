@@ -1563,13 +1563,19 @@ def validar_tablas_usuario(usuario_id):
 # -------------------------
 # ENDPOINT PARA OBTENER LISTA DE PARTIPICIPANTES POR ANIMADOR
 def serialize_mongo_doc(doc):
-    for key, value in doc.items():
-        if isinstance(value, ObjectId):
-            doc[key] = str(value)
-        elif isinstance(value, list):
-            doc[key] = [str(v) if isinstance(v, ObjectId) else v for v in value]
-        elif isinstance(value, dict):
-            doc[key] = serialize_mongo_doc(value)
+    """Convierte ObjectIds a strings en un documento MongoDB"""
+    if isinstance(doc, dict):
+        result = {}
+        for key, value in doc.items():
+            if isinstance(value, ObjectId):
+                result[key] = str(value)
+            elif isinstance(value, list):
+                result[key] = [str(v) if isinstance(v, ObjectId) else v for v in value]
+            elif isinstance(value, dict):
+                result[key] = serialize_mongo_doc(value)
+            else:
+                result[key] = value
+        return result
     return doc
 
 @app.route('/api/participantes/por-usuario/<usuario_id>', methods=['GET'])
@@ -1588,27 +1594,106 @@ def participantes_por_usuario_con_info(usuario_id):
         usuario_doc = serialize_mongo_doc(usuario_doc)
         usuario_doc["_id"] = str(usuario_doc["_id"])
 
-        participantes_cursor = mongo_collection_participantes.find(
-            {"registrado_por": usuario_obj_id}
-        )
+        # Verificar si el usuario es administrador (tipo_usuario = 0)
+        tipo_usuario_val = safe_int(usuario_doc.get("tipo_usuario"), 1)
+        es_admin = (tipo_usuario_val == 0)
+        print(f"[DEBUG] tipo_usuario: {tipo_usuario_val}, es_admin: {es_admin}")
+        # DEBUG: Log para verificar
+        print(f"[DEBUG] Usuario ID: {usuario_id}, tipo_usuario: {tipo_usuario_val}, es_admin: {es_admin}")
 
+        # Si es admin, obtener TODOS los participantes; si no, solo los del usuario
+        if es_admin:
+            print(f"[DEBUG] Obteniendo TODOS los participantes (admin)")
+            # Materializar el cursor a lista para evitar problemas de agotamiento
+            participantes_list = list(mongo_collection_participantes.find({}))
+            print(f"[DEBUG] Documentos encontrados en BD: {len(participantes_list)}")
+        else:
+            print(f"[DEBUG] Obteniendo participantes solo del usuario: {usuario_obj_id}")
+            participantes_list = list(mongo_collection_participantes.find(
+                {"registrado_por": usuario_obj_id}
+            ))
+            print(f"[DEBUG] Documentos encontrados en BD: {len(participantes_list)}")
+
+        participantes = []
+        for p in participantes_list:
+            p_serialized = serialize_mongo_doc(p)
+            p_serialized["_id"] = str(p_serialized["_id"])
+            participantes.append(p_serialized)
+
+        print(f"[DEBUG] Total de participantes serializados: {len(participantes)}")
+
+        return jsonify({
+            "success": True,
+            "usuario": usuario_doc,
+            "participantes": participantes,
+            "es_admin": es_admin,
+            "tipo_usuario": tipo_usuario_val,
+            "total_participantes": len(participantes)
+        }), 200
+
+    except Exception as e:
+        print(f"[ERROR] Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "Error al obtener participantes por usuario"
+        }), 500
+
+
+# -------------------------
+# ENDPOINT PARA OBTENER TODOS LOS PARTICIPANTES (SOLO ADMIN)
+# -------------------------
+@app.route('/api/participantes/todos/admin', methods=['GET'])
+def obtener_todos_participantes_admin():
+    """
+    Obtiene TODOS los participantes registrados en el sistema.
+    Solo debe ser accesible para administradores.
+    
+    Query params:
+    - usuario_id: ID del usuario administrador (para validación)
+    """
+    try:
+        usuario_id = request.args.get('usuario_id')
+        
+        # Si se proporciona usuario_id, validar que sea admin
+        if usuario_id:
+            try:
+                usuario_obj_id = ObjectId(usuario_id)
+                usuario = mongo_collection_users.find_one({"_id": usuario_obj_id}, {"password": 0})
+                if not usuario:
+                    return jsonify({"success": False, "message": "Usuario no encontrado."}), 404
+                
+                # Verificar que sea admin
+                if safe_int(usuario.get("tipo_usuario"), 1) != 0:
+                    return jsonify({
+                        "success": False,
+                        "message": "Acceso denegado. Solo administradores pueden ver todos los participantes."
+                    }), 403
+            except:
+                return jsonify({"success": False, "message": "ID de usuario inválido."}), 400
+        
+        # Obtener TODOS los participantes
+        participantes_cursor = mongo_collection_participantes.find({})
+        
         participantes = []
         for p in participantes_cursor:
             p = serialize_mongo_doc(p)
             p["_id"] = str(p["_id"])
             participantes.append(p)
-
+        
         return jsonify({
             "success": True,
-            "usuario": usuario_doc,
-            "participantes": participantes
+            "participantes": participantes,
+            "total_participantes": len(participantes)
         }), 200
-
+        
     except Exception as e:
         return jsonify({
             "success": False,
             "error": str(e),
-            "message": "Error al obtener participantes por usuario"
+            "message": "Error al obtener todos los participantes."
         }), 500
 
 
@@ -2659,7 +2744,7 @@ def main():
             print("Argumento no reconocido. Usa un número de tablas o un PDF.")
     else:
         # Si no hay argumentos, inicia el servidor Flask
-        app.run(host="0.0.0.0", port=5000, debug=True)
+        app.run(host="0.0.0.0", port=5001, debug=True)
 
 
 if __name__ == '__main__':
