@@ -1256,8 +1256,14 @@ def obtener_tablas_consecutivas():
         tablas_usuario = []
         for tabla in tablas_rango:
             num = extraer_numero(tabla.get("serial", ""))
-            if from_num <= num <= to_num:
-                tablas_usuario.append(tabla)
+            if from_num <= to_num:
+                # Rango ascendente
+                if from_num <= num <= to_num:
+                    tablas_usuario.append(tabla)
+            else:
+                # Rango descendente
+                if to_num <= num <= from_num:
+                    tablas_usuario.append(tabla)
         
         if not tablas_usuario:
             return jsonify({
@@ -2744,7 +2750,7 @@ def main():
             print("Argumento no reconocido. Usa un número de tablas o un PDF.")
     else:
         # Si no hay argumentos, inicia el servidor Flask
-        app.run(host="0.0.0.0", port=5001, debug=True)
+        app.run(host="0.0.0.0", port=5000, debug=True)
 
 
 if __name__ == '__main__':

@@ -76,6 +76,12 @@ def obtener_participantes_por_usuario(nombres_usuarios, exportar_txt=False):
         print(f"   ID: {usuario_id}")
         print(f"   Total Tablas: {usuario.get('totalTables', 0)}")
         print(f"   Tablas Usadas: {usuario.get('usedTables', 0)}")
+        # Obtener rango de tablas del usuario
+        fromSerial = usuario.get('fromSerial')
+        toSerial = usuario.get('toSerial')
+        
+        print(f"  - Rango de Tablas: {fromSerial} a {toSerial}")
+        print(f"  - Tablas Disponibles: {usuario.get('totalTables', 0) - usuario.get('usedTables', 0)}")
         print(f"{'─'*80}")
         
         # Agregar al txt
@@ -85,6 +91,9 @@ def obtener_participantes_por_usuario(nombres_usuarios, exportar_txt=False):
         resultado_general["lineas_txt"].append(f"ID: {usuario_id}")
         resultado_general["lineas_txt"].append(f"Total Tablas: {usuario.get('totalTables', 0)}")
         resultado_general["lineas_txt"].append(f"Tablas Usadas: {usuario.get('usedTables', 0)}")
+        resultado_general["lineas_txt"].append(f"  - Rango de Tablas: {fromSerial} a {toSerial}")
+        resultado_general["lineas_txt"].append(f"  - Tablas Disponibles: {usuario.get('totalTables', 0) - usuario.get('usedTables', 0)}")
+
         resultado_general["lineas_txt"].append("─" * 80)
         
         # Obtener participantes del usuario
@@ -279,10 +288,9 @@ if __name__ == "__main__":
     # Ejecutar reporte
     resultado = obtener_participantes_por_usuario(nombres)
     
-    # Si se leyó desde archivo, exportar automáticamente a txt
-    if archivo_entrada:
-        exportar_a_txt(resultado, "Rangos de usuarios.txt")
-    
+    # ⬇⬇⬇ NUEVO: Exportar SIEMPRE a TXT
+    exportar_a_txt(resultado, "Rangos de usuarios.txt")
+
     # Exportar a JSON si se solicitó
     if archivo_salida:
         exportar_a_json(resultado, archivo_salida)
