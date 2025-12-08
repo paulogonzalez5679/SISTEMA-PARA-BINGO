@@ -594,8 +594,17 @@ def winner_pdf():
 def reset():
     # Reconstruir JSON activo leyendo la colección 'tablas' en MongoDB
     try:
-        # Obtener todas las tablas que NO sean ganadoras
-        active_cursor = mongo_collection_tables.find({"$or": [{"won": False}, {"won": {"$exists": False}}]}, {"serial": 1, "matrix": 1})
+        # Obtener todas las tablas que NO sean ganadoras y que estén asignadas (solo las que participan en el juego)
+        # Se filtra por "stateAsigned": True para asegurar que solo juegan las tablas asignadas a participantes
+        active_cursor = mongo_collection_tables.find(
+            {
+                "$and": [
+                    {"$or": [{"won": False}, {"won": {"$exists": False}}]},
+                    {"stateAsigned": True}
+                ]
+            },
+            {"serial": 1, "matrix": 1, "stateAsigned": 1}
+        )
         active_rows = list(active_cursor)
     except Exception as e:
         return jsonify({"success": False, "message": "Error al leer la base de datos", "error": str(e)}), 500
@@ -1933,7 +1942,7 @@ def obtener_tablas():
             participantes = list(mongo_collection_participantes.find({
                 "$or": [
                     {"nombre": {"$regex": search, "$options": "i"}},
-                    {"cedula": {"$regex": search, "$options": "i"}}
+                    {"cedula": {"$regex": search, "$options": "i"}},
                 ]
             }))
             participante_ids = [p["_id"] for p in participantes]
@@ -1967,7 +1976,9 @@ def obtener_tablas():
                         "_id": str(participante["_id"]),
                         "nombre": participante.get("nombre", ""),
                         "apellido": participante.get("apellido", ""),
-                        "cedula": participante.get("cedula", "")
+                        "cedula": participante.get("cedula", ""),
+                        "nivelCurso": participante.get("nivelCurso", ""),
+                        "paralelo": participante.get("paralelo", "")
                     }
             
             resultado.append(tabla_dict)
@@ -2025,7 +2036,9 @@ def obtener_tabla_especifica(tabla_id):
                 "_id": str(participante["_id"]),
                 "nombre": participante.get("nombre", ""),
                 "apellido": participante.get("apellido", ""),
-                "cedula": participante.get("cedula", "")
+                "cedula": participante.get("cedula", ""),
+                "nivelCurso": participante.get("nivelCurso", ""),
+                "paralelo": participante.get("paralelo", "")
             }
         
         return jsonify({
@@ -2749,8 +2762,16 @@ def main():
         else:
             print("Argumento no reconocido. Usa un número de tablas o un PDF.")
     else:
-        # Si no hay argumentos, inicia el servidor Flask
-        app.run(host="0.0.0.0", port=5000, debug=True)
+        # Si no hay argumentos, reconstruir el JSON activo (solo tablas asignadas) y luego iniciar el servidor Flask
+        try:
+            # Llamar a la función reset() para crear el JSON activo desde la BD
+            # reset() ya filtra por `stateAsigned = True` (ver modificación previa)
+            try:
+                reset()
+            except Exception as e:
+                print(f"Advertencia: fallo al reconstruir JSON inicial desde DB: {e}")
+        finally:
+            app.run(host="0.0.0.0", port=5000, debug=True)
 
 
 if __name__ == '__main__':
