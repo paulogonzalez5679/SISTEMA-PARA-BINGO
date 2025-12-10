@@ -1379,6 +1379,122 @@ def obtener_tablas_participante(participante_id):
         }), 500
 
 
+# ENDPOINT: Buscar participante por cédula y devolver info + tablas asignadas
+@app.route('/api/participante/cedula/<string:cedula>', methods=['GET'])
+def participante_por_cedula(cedula):
+    """
+    Busca un participante por su número de cédula y devuelve nombre, apellido, curso, nivel y tablas asignadas.
+    """
+    try:
+        participante = mongo_collection_participantes.find_one({"cedula": cedula})
+        if not participante:
+            return jsonify({"success": False, "message": f"Participante con cédula {cedula} no encontrado."}), 404
+
+        # Campos de interés
+        participante_info = {
+            "_id": str(participante.get("_id")),
+            "nombre": participante.get("nombre", ""),
+            "apellido": participante.get("apellido", ""),
+            "cedula": participante.get("cedula", ""),
+            "nivelCurso": participante.get("nivelCurso", ""),
+            "paralelo": participante.get("paralelo", ""),
+            "tablas": []
+        }
+
+        tablas_ids = participante.get("tablas", [])
+        if tablas_ids:
+            tablas_encontradas = list(mongo_collection_tables.find({"_id": {"$in": tablas_ids}}))
+            for tabla in tablas_encontradas:
+                participante_info["tablas"].append({
+                    "_id": str(tabla.get("_id")),
+                    "serial": tabla.get("serial", ""),
+                    "matrix": tabla.get("matrix", []),
+                    "won": tabla.get("won", False),
+                    "stateAsigned": tabla.get("stateAsigned", False)
+                })
+
+        return jsonify({"success": True, "participante": participante_info}), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "message": "Error al buscar participante por cédula."}), 500
+
+
+# ENDPOINT: Descargar PDF con las tablas asignadas a un participante (por cédula)
+@app.route('/api/participante/cedula/<string:cedula>/tablas_pdf', methods=['GET'])
+def participante_tablas_pdf(cedula):
+    """
+    Genera y devuelve un PDF con las tablas asignadas al participante identificado por cédula.
+    """
+    try:
+        participante = mongo_collection_participantes.find_one({"cedula": cedula})
+        if not participante:
+            return jsonify({"success": False, "message": f"Participante con cédula {cedula} no encontrado."}), 404
+
+        tablas_ids = participante.get("tablas", [])
+        if not tablas_ids:
+            return jsonify({"success": True, "message": "El participante no tiene tablas asignadas.", "tablas": []}), 200
+
+        tablas_encontradas = list(mongo_collection_tables.find({"_id": {"$in": tablas_ids}}))
+
+        # Generar PDF en memoria
+        buffer = io.BytesIO()
+        c = canvas.Canvas(buffer, pagesize=letter)
+        PAGE_WIDTH, PAGE_HEIGHT = letter
+        MARGIN_X = 0.5 * inch
+        MARGIN_Y = 0.5 * inch
+        CARD_WIDTH = (PAGE_WIDTH - 2*MARGIN_X) / 2
+        CARD_HEIGHT = (PAGE_HEIGHT - 2*MARGIN_Y) / 2
+        CARDS_PER_PAGE = 4
+
+        for idx, tabla in enumerate(tablas_encontradas):
+            matrix = tabla.get("matrix", [[None]*5 for _ in range(5)])
+            serial = tabla.get("serial", "")
+
+            page_pos = idx % CARDS_PER_PAGE
+            row = page_pos // 2
+            col = page_pos % 2
+            x = MARGIN_X + col*CARD_WIDTH
+            y = PAGE_HEIGHT - MARGIN_Y - (row+1)*CARD_HEIGHT
+
+            # Título y serial
+            c.setFont("Helvetica-Bold", 14)
+            c.drawCentredString(x + CARD_WIDTH/2, y + CARD_HEIGHT - 15, "BINGO UETS")
+            c.setFont("Helvetica-Bold", 10)
+            c.drawCentredString(x + CARD_WIDTH/2, y + CARD_HEIGHT - 30, serial)
+
+            grid_top = y + CARD_HEIGHT - 55
+            grid_left = x + 10
+            cell_w = (CARD_WIDTH - 20) / 5
+            cell_h = (CARD_HEIGHT - 60) / 6
+
+            c.setFont("Helvetica-Bold", 10)
+            for i, L in enumerate(["B","I","N","G","O"]):
+                c.drawCentredString(grid_left + i*cell_w + cell_w/2, grid_top, L)
+
+            extra_space = 15
+            c.setFont("Helvetica", 8)
+            for r in range(5):
+                for col2 in range(5):
+                    left = grid_left + col2*cell_w
+                    top = grid_top - extra_space - (r+1)*cell_h
+                    c.rect(left, top, cell_w, cell_h)
+                    val = matrix[r][col2]
+                    txt = str(val) if val is not None else " "
+                    c.drawCentredString(left + cell_w/2, top + cell_h/2 - 3, txt)
+
+            if page_pos == CARDS_PER_PAGE-1 or idx == len(tablas_encontradas)-1:
+                c.showPage()
+
+        c.save()
+        buffer.seek(0)
+
+        filename = f"tablas_{cedula}.pdf"
+        return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "message": "Error generando PDF de tablas."}), 500
+
+
 # ENDPOINT PARA ELIMINAR LA ASIGNACIÓN DE UNA TABLA A UN PARTICIPANTE
 @app.route('/api/eliminarTablaAsignada', methods=['POST'])
 def eliminar_tabla_asignada():
